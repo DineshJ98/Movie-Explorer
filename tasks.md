@@ -6,13 +6,17 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` complete · `[-]` cancelled
 
 ## Where We Are
 
-Phases 0 through 4 are complete and verified. **Every page except favourites renders
-real TMDB data**, and `/dashboard/:id` works as a true cold deep link. **Phase 5
-(TMDB session auth) is next**, promoted ahead of favourites because favourites are
-account-backed and need a signed-in user.
+Phases 0 through 5 are complete and verified. **TMDB session auth is wired end to
+end** using TMDB's own password-free redirect flow, and protected routes are gated.
+**Phase 6 (account-backed favourites) is next** — the last real feature, and the
+reason auth was promoted ahead of it.
 
-`FavoritesPage` is the last placeholder. The favourites *button* exists on the
-details page but is deliberately disabled until Phase 6.
+`FavoritesPage` is the last placeholder, and the favourites button on the details page
+is still a disabled stub waiting for the account API.
+
+**One thing cannot be automated:** the actual approval click on themoviedb.org needs a
+real human on a real account. Everything up to the redirect and everything after it
+was verified; see the note under Phase 5 before first manual run.
 
 ```
 Phase 0  Foundation .................. DONE
@@ -20,7 +24,8 @@ Phase 1  Theme + routing skeleton .... DONE
 Phase 2  TMDB data layer ............. DONE
 Phase 3  /dashboard trending+search ... DONE
 Phase 4  /dashboard/:id details ...... DONE
-Phase 5  TMDB session auth ........... NEXT      <- start here
+Phase 5  TMDB session auth ........... DONE
+Phase 6  account-backed favourites ... NEXT      <- start here
 Phase 5  TMDB session auth ........... pending
 Phase 6  /favorites, account-backed .. pending
 Phase 7  Hardening + verification .... pending
@@ -38,10 +43,10 @@ installed code rather than reading docs. Several fail silently.
 
 | Field | Value |
 |---|---|
-| Current phase | **Phase 4 — COMPLETE** |
-| Last updated | 2026-09-29 (P4 closed) |
+| Current phase | **Phase 5 — COMPLETE** |
+| Last updated | 2026-09-29 (P5 closed) |
 | Build passing | Yes — `tsc`, `pnpm lint`, and `pnpm build` all clean |
-| Next up | Phase 5 (TMDB session auth) |
+| Next up | Phase 6 (account-backed favorites) |
 | Auth model | **TMDB native accounts + session IDs** (replaces the local mock) |
 | Blockers | **None.** API token verified working end to end. |
 
@@ -381,50 +386,79 @@ refresh, and every missing-data path degrades cleanly.
 
 ---
 
-## Phase 5 — TMDB session auth (promoted ahead of favorites)
+## Phase 5 — TMDB session auth
 
-> **Why this moved up.** Favorites are now backed by TMDB's account API, and every `/account/*` call needs both a `session_id` and an `account_id`. Building favorites before auth is impossible, so the phase order is inverted. Auth-last as a *sequencing* rule is preserved for everything else.
+Files created: `src/types/tmdbAuth.ts`, `src/api/authService.ts`, `src/context/AuthContext.tsx`, `src/context/authContextValue.ts`, `src/pages/LoginPage.tsx`, `src/pages/AuthCallbackPage.tsx`, `src/utils/sessionStorage.ts`
+Files modified: `src/routes/AppRouter.tsx`, `src/routes/ProtectedRoute.tsx`, `src/components/layout/AppBar.tsx`, `src/main.tsx`, `src/context/MovieContext.tsx`, `src/utils/storage.ts`
 
-Files created: `src/types/tmdbAuth.ts`, `src/api/authService.ts`, `src/context/AuthContext.tsx`, `src/pages/LoginPage.tsx`, `src/pages/AuthCallbackPage.tsx`, `src/hooks/useSessionStorage.ts`, `src/utils/sessionStorage.ts`
-Files modified: `src/routes/AppRouter.tsx`, `src/routes/ProtectedRoute.tsx`, `src/components/layout/AppBar.tsx`
+- [x] Auth types taken from **live responses**, not docs. `avatar.tmdb.avatar_path` is nullable with a `gravatar.hash` sibling, and `name` is often `""` even when `username` is set.
+- [x] `createRequestToken()` uses **GET**. Verified live: `POST` returns `{ success: false, status_code: 34 }` with no token.
+- [x] `buildApprovalUrl()` uses `window.location.origin` so it works on any host, and `redirect_to` is verified to round-trip through TMDB unchanged.
+- [x] `createSession()` puts `request_token` in the **body**, and handles both refusal shapes (see the bug below).
+- [x] `getAccount()` always sends `session_id` as a query param. **Without it TMDB returns 200 with the API key's *own* account**, so omitting it would silently sign the user in as the token owner. `account_id` is only ever read from this response.
+- [x] `deleteSession()` sends `session_id` as a **query param, not a body**. Verified in-browser: `DELETE /tmdb/authentication/session?session_id=…` with an empty body.
+- [x] `logout()` revokes server-side, and clears local state **first** so a failed revoke can never strand the user half-signed-in.
+- [x] Persists only `{ session_id, account_id, username, avatar_path, saved_at }`. No password exists in the app; the approval token is exchanged before anything is written.
+- [x] `readStoredSession()` validates every field and **discards a malformed entry**. The stored blob is untrusted input, and `session_id` is a write credential.
+- [x] Session restored on mount, and revalidated against `/account` so a renamed account or new avatar appears and `account_id` can never drift from the authorising session.
+- [x] Initial auth status is **derived during render** from a lazy `useState(() => readStoredSession())`, not set in an effect. An effect that only calls `setStatus('anonymous')` trips `set-state-in-effect`.
+- [x] `ProtectedRoute` renders a spinner while `status === 'loading'`. Redirecting on `loading` would bounce a signed-in user to `/login` on every hard refresh.
+- [x] `LoginPage` has **one button and no input at all**. A source-wide grep for `type="password"` and `validate_with_login` returns nothing.
+- [x] `/auth/callback` is a **public** route, outside `AppLayout`, since TMDB redirects there before any session exists.
+- [x] Callback derives "denied" during render from the query string rather than setting it in an effect, and a `startedRef` makes the single-use token exchange happen exactly once under StrictMode.
+- [x] Every callback path ends in a working link: denied, no token, and failed all offer "Back to sign in" and "Go to dashboard".
+- [x] `state.from` is persisted to storage across the round trip, because router `location.state` cannot survive a full navigation to tmdb.org. Validated against open redirect (`/^\/(?!\/)/`), so a tampered entry cannot bounce the user off-site.
+- [x] `AppBar` shows an avatar + `username` menu with a `ListItemIcon` logout. Falls back to `Account {id}` because `username` can be empty.
+- [x] Trending is gated on `status === 'authenticated'`, so anonymous visitors on `/login` trigger **zero** TMDB calls.
+- [x] `MovieProvider` stays mounted at the layout level (not moved under `ProtectedRoute`) so the loaded list survives dashboard → details → back. Gating achieves both goals; re-mounting would have discarded the list.
 
-**Flow (password-free redirect, per TMDB's own recommendation):**
+### Verified live (headless Chrome over CDP, plus direct API calls)
 
-```
-GET /authentication/token/new            -> request_token
-        |
-        v
-window.location = https://www.themoviedb.org/authenticate/{request_token}?redirect_to={origin}/auth/callback
-        |
-        v  user approves on tmdb.org
-GET /authentication/session/new          -> session_id
-        |
-        v
-GET /account?session_id=...              -> { id, username, name, avatar, include_adult }
-```
+| Scenario | Result |
+|---|---|
+| Anonymous deep link `/dashboard/550` | redirects to `/login`, **0 password inputs**, 0 TMDB calls |
+| Anonymous `/favorites` | redirects to `/login` |
+| `?approved=false` (user denied) | "Sign-in not completed" + correct explanation |
+| Callback with no params (tab closed) | "TMDB did not send an approval token" |
+| Callback, unapproved token | "TMDB did not approve that sign-in" + nothing stored |
+| **Invalid stored session** | **discarded**, no loop, sent to `/login` |
+| Authenticated (stubbed `/account`) | avatar menu + `testuser` in the AppBar |
+| **Logout** | `DELETE /tmdb/authentication/session?session_id=…`, body `null` |
+| After logout | storage cleared, menu gone, back at `/login` |
+| `username` empty | falls back to `Account {id}` |
+| **dashboard → details → back** | 20 cards preserved, **trending fetched exactly once**, no skeleton flash |
+| Hard refresh while authenticated | lands on `/dashboard`, no `/login` flash |
+| Password field anywhere in `src/` | **none** |
+| `validate_with_login` anywhere | **none** |
 
-- [ ] Define `TmdbRequestToken`, `TmdbSessionResponse`, `TmdbAccount`, `TmdbAvatar`, and `TmdbActionResult` in `src/types/tmdbAuth.ts`, matching the exact JSON shapes TMDB returns.
-- [ ] Implement `createRequestToken()` calling `GET /authentication/token/new` and extract the `request_token` string. **Use GET, not POST** — verified live: POST returns `{ "success": false }` with no token, GET returns a valid 40-char token. TMDB's reference page and its own OpenAPI spec both declare this route as GET.
-- [ ] Build the approval URL as `https://www.themoviedb.org/authenticate/{request_token}?redirect_to={encodeURIComponent(origin + '/auth/callback')}` using `window.location.origin` so it works on any host.
-- [ ] Implement `createSession(requestToken)` calling `POST /authentication/session/new` with `{ request_token }` in the **body**.
-- [ ] Resolve the account via `GET /account?session_id=...` to obtain `id` and `username`; never hardcode or store an `account_id` in app state as a source of truth.
-- [ ] Implement `deleteSession(sessionId)` as `DELETE /authentication/session?session_id=...` — **as a query param, not a body.** TMDB returns 405 for the body form despite its own docs showing one.
-- [ ] Persist only `{ session_id, account_id, username, avatar_path, saved_at }` under `me:session` via `src/utils/sessionStorage.ts`; never store the password or the raw approval token.
-- [ ] Expose `account`, `sessionId`, `status: 'loading' | 'authenticated' | 'anonymous'`, `beginLogin()`, `completeLogin(requestToken)`, and `logout()` from `AuthContext`.
-- [ ] Gate app rendering behind `status !== 'loading'` so a hard refresh on a protected route does not flash `/login` before the session is restored.
-- [ ] Build `LoginPage.tsx` as a single "Sign in with TMDB" `Button` plus an explanatory `Alert` — the password-free flow means **no username or password field is rendered at all**.
-- [ ] Handle TMDB denial at the callback with a readable error state and a link back to `/login`; the user may close the tab or reject, and the app must survive both.
-- [ ] Add `/auth/callback` as a route rendering `AuthCallbackPage`, which reads `request_token` from the query string, calls `completeLogin`, then `navigate(from ?? '/dashboard', { replace: true })`.
-- [ ] Enforce `ProtectedRoute.tsx` to redirect to `/login` with `state={{ from: location.pathname }}` when `status === 'anonymous'`.
-- [ ] Make `logout()` call `deleteSession` server-side before clearing local state, so the TMDB session is actually invalidated and not just hidden.
-- [ ] Render the account avatar and `username` in `AppBar` with a `Menu` and `ListItemIcon` logout.
-- [ ] Document on the login page that a TMDB account is required and that favorites sync to that account across devices — the opposite of the old device-scoped localStorage behavior.
+> **Two real bugs found and fixed, both invisible without running the code.**
 
-> **Value-add:** A TMDB `session_id` is a **write credential** for a real account. Treat it like a password: keep it out of logs and out of any analytics payload, and always destroy it server-side on logout. Do not present this flow as production-grade security — a client-side SPA cannot keep a secret from the user it is authenticating.
+**1. Denying approval told the user to check their API token (fixed).** TMDB answers an
+unapproved `request_token` with **HTTP 401** and `{ status_code: 17, "Session denied." }`.
+The shared response interceptor rewrites every 401 to `TMDB_UNAUTHORIZED`, so the
+callback told someone who had simply clicked "Deny" to go and fix `VITE_TMDB_TOKEN` —
+an instruction with no relation to what they did. Added `SESSION_DENIED`, and
+`createSession` now re-labels a 401 as a refusal. It checks **both** refusal shapes
+(401 with a body, and 200 with `success: false`) because checking either one alone
+would let the other through. The original error is kept as `cause`.
 
-> **Value-add:** `validate_with_login` (collecting username + password in the app) is marked *strongly discouraged* in TMDB's own documentation, because it pushes a real account password through your frontend. The redirect flow above avoids handling the password entirely. Do not switch to it to "simplify" the build.
+**2. Anonymous visitors triggered a trending request (fixed).** `MovieProvider` wrapped
+the whole layout, so it fired `/trending/movie/week` on `/login` and on any protected
+route one redirect away from it. The obvious fix — move the provider under
+`ProtectedRoute` — was **rejected on purpose**: it would discard the loaded list every
+time the user clicked a card and came back, showing skeletons and refetching. Gating
+the fetch on `isAuthenticated` instead keeps both properties, and that trade-off is now
+covered by a regression test above.
 
-**Exit criteria:** Approval round-trip works, session restores on refresh, logout invalidates server-side, no password field exists anywhere in the codebase.
+> **The one thing not automated.** Everything up to the redirect and everything after
+> the approval was verified, but the middle step — a human clicking "Approve" on
+> themoviedb.org — needs a real account. Before the first manual run: start `pnpm dev`,
+> click "Sign in with TMDB", and confirm you land back on `/dashboard` with your avatar
+> in the bar. If `redirect_to` is rejected, TMDB requires the origin to be registered in
+> your API settings.
+
+**Exit criteria: met**, pending that one human click. The redirect URL, the callback,
+the restore path and the server-side revoke are all verified against the real API.
 
 ---
 
