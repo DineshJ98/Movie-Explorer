@@ -12,6 +12,23 @@
       name="color-scheme"
       content="light dark"
     />
+    <script>
+      /* Runs before paint so the stored theme never flashes the wrong
+         background. Kept in sync with STORAGE_KEYS.theme in src/utils/storage.ts. */
+      try {
+        var stored = localStorage.getItem('movieexplorer:theme')
+        var mode =
+          stored === 'light' || stored === 'dark'
+            ? stored
+            : window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light'
+        document.documentElement.style.colorScheme = mode
+        document.documentElement.dataset.theme = mode
+      } catch (e) {
+        /* storage blocked; fall through to the React default */
+      }
+    </script>
     <title>Movie Explorer</title>
   </head>
   <body>

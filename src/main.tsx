@@ -1,10 +1,20 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { RouterProvider } from 'react-router-dom'
 import './index.css'
-import App from './App.tsx'
+import { AppThemeProvider } from './context/ThemeContext'
+import router from './routes/AppRouter'
 
-createRoot(document.getElementById('root')!).render(
+const container = document.getElementById('root')
+
+if (container === null) {
+  throw new Error('Root element #root not found in index.html')
+}
+
+createRoot(container).render(
   <StrictMode>
-    <App />
+    <AppThemeProvider>
+      <RouterProvider router={router} />
+    </AppThemeProvider>
   </StrictMode>,
 )
