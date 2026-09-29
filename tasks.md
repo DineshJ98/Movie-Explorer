@@ -462,6 +462,81 @@ the restore path and the server-side revoke are all verified against the real AP
 
 ---
 
+## Deployment fix — the Vercel build (2026-09-30)
+
+Reported symptom: sign-in "redirected locally" but the deployed app always landed back
+on the login page. TMDB was **not** at fault. Two bugs exist only in a production build,
+which is exactly why `pnpm dev` hid both of them.
+
+### Bug 1 — `baseURL: '/tmdb'` is a dev-server path, and it shipped
+
+`src/api/tmdbClient.ts` used `baseURL: '/tmdb'`, which is served by the `vite.config.ts`
+dev proxy. That proxy is a property of `vite dev` and **is not compiled into the bundle**.
+Confirmed against the live deployment, not inferred:
+
+| Probe | Result |
+|---|---|
+| `baseURL` in the deployed bundle | `` `/tmdb` `` |
+| `GET /tmdb/3/trending/movie/week` on the deployed host | **404** `NOT_FOUND` |
+| Same request direct to `api.themoviedb.org` | 200 |
+
+So every TMDB call in production asked Vercel for a file that does not exist, including
+`GET /authentication/token/new`. The button therefore could never obtain a request
+token, never left the login page, and looked like a broken redirect.
+
+Fixed by making the base URL environment-aware: `/tmdb` in dev (keeping the proxy and its
+CORS-free behaviour) and `https://api.themoviedb.org/3` in production. This is safe
+because TMDB's CORS policy is explicitly permissive — verified with a real preflight:
+`access-control-allow-origin: *`, `access-control-allow-headers: Authorization, …`,
+`access-control-allow-methods: GET,HEAD,PUT,POST,DELETE,OPTIONS`.
+
+### Bug 2 — no SPA rewrite, so `/auth/callback` returned a 404 page
+
+`/auth/callback` is where TMDB sends the browser back to. With no rewrite, the host
+looked for a file at that path and returned its own 404 page, so the callback component
+never mounted even on a successful approval. `/dashboard/550` 404'd the same way.
+
+Fixed with `vercel.json`. `rewrites` are evaluated **after** Vercel's filesystem check,
+so hashed files under `/assets/` are still served and only unmatched paths fall through
+to `index.html`.
+
+### Verified against the real production build
+
+Served from `dist/` via `vite preview` (which has **no** dev proxy and **no** rewrite
+layer, so it reproduces production conditions) and driven over CDP:
+
+| Scenario | Result |
+|---|---|
+| Anonymous deep link `/dashboard/550` | `/login`, 0 password inputs, **0 TMDB calls** |
+| **Hard load of `/auth/callback?approved=false`** | **SPA served, not a 404** — denial state renders |
+| Callback with no params | renders "Sign-in not completed" |
+| Authenticated dashboard, prod build | `200` straight from `api.themoviedb.org/3/trending/...`, 20 cards |
+| Any `/tmdb/` path in production traffic | **none** |
+| Stubbed `/account` | Account menu + `prodtester` in the AppBar, stays on `/dashboard` |
+| Sign out | `DELETE /3/authentication/session?session_id=…`, **no body**, storage cleared, back to `/login` |
+| Invalid stored session | real `401` from `/account`, session discarded, no loop |
+| Console errors | none |
+
+### Bug 3 — a failed sign-in left the button permanently disabled (found while testing)
+
+`LoginPage` set `starting=true`, but `beginLogin` caught its own errors, so a failed
+token request left the user staring at a disabled "Redirecting to TMDB" button with no
+way to retry. `beginLogin` now rethrows so the page can restore the button; verified by
+blocking the token endpoint, which leaves the button enabled and shows
+"Sign-in could not be completed. Please try again."
+
+### Redeploy checklist
+
+1. `vercel.json` must be committed — it is what adds the SPA rewrite.
+2. `VITE_TMDB_TOKEN` must be set in the Vercel project's **Environment Variables** for
+   Production. It is `VITE_`-prefixed, so it is inlined at build time and changing it
+   requires a rebuild, not just a redeploy.
+   (Confirmed the previous deployment did have it baked in, so this is likely already fine.)
+3. No TMDB domain registration is needed. TMDB was checked directly: it accepts a
+   `*.vercel.app` `redirect_to` and echoes it back intact.
+
+---
+
 ## Phase 6 — `/favorites` synced to the TMDB account
 
 > Rebuilt from the old localStorage design. Favorites are now remote, account-scoped, and survive across devices.

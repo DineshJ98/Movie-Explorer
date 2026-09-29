@@ -25,15 +25,19 @@ export default function LoginPage() {
 
   const from = (location.state as { from?: string } | null)?.from ?? null
 
-  const handleClick = () => {
+  const handleClick = async () => {
     clearError()
     setStarting(true)
     // Remember where the user was headed. The router's location.state cannot
     // survive a full navigation to tmdb.org and back.
     writePendingRedirect(from)
-    // Leaves for tmdb.org, so the loading state is only visible if the token
-    // request fails and the navigation never happens.
-    beginLogin()
+
+    try {
+      await beginLogin()
+    } catch {
+      // Only reached when the token request failed and no navigation occurred.
+      setStarting(false)
+    }
   }
 
   return (

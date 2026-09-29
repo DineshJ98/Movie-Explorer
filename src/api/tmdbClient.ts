@@ -18,8 +18,22 @@ if (!token) {
   )
 }
 
+/**
+ * Dev uses the Vite proxy at `/tmdb`, which rewrites the prefix to `/3` so the
+ * app avoids CORS and never hardcodes an API host.
+ *
+ * That proxy is a property of `vite dev` and **does not exist in the production
+ * bundle**, so a hardcoded `/tmdb` base URL 404s on every request once deployed
+ * (verified on Vercel). Production therefore talks to TMDB directly, which its
+ * CORS policy explicitly allows: `access-control-allow-origin: *` with
+ * `Authorization` in `access-control-allow-headers`.
+ */
+const apiBaseUrl = import.meta.env.DEV
+  ? '/tmdb'
+  : `https://api.themoviedb.org/3`
+
 export const tmdbClient: AxiosInstance = axios.create({
-  baseURL: '/tmdb',
+  baseURL: apiBaseUrl,
   timeout: 15_000,
   headers: { accept: 'application/json' },
   params: { language: 'en-US' },
