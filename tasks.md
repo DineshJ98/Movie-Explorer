@@ -4,6 +4,28 @@ Strategy: **Routing First → Page-by-Page → Auth Last**
 
 Legend: `[ ]` pending · `[~]` in progress · `[x]` complete · `[-]` cancelled
 
+## Where We Are
+
+Phases 0 and 1 are complete and verified. The app boots, all five routes render
+real content, dark mode is confirmed working in a browser, and the theme builds
+clean in both modes. **Phase 2 (TMDB data layer) is the next phase** — it is the
+first one to touch the live API, and the token is already verified working.
+
+```
+Phase 0  Foundation .................. DONE
+Phase 1  Theme + routing skeleton .... DONE
+Phase 2  TMDB data layer ............. NEXT      <- start here
+Phase 3  /dashboard trending+search ... pending
+Phase 4  /dashboard/:id details ...... pending
+Phase 5  TMDB session auth ........... pending
+Phase 6  /favorites, account-backed .. pending
+Phase 7  Hardening + verification .... pending
+```
+
+**Before starting Phase 2**, read the *API Findings* table in Phase 1 below. Six
+behavior changes in MUI v9, React Router v7, and TMDB were found by running the
+installed code rather than reading docs. Several fail silently.
+
 > **Superseded requirement:** authentication is **no longer a local mock**. Phases 5 and 6 now use TMDB's native user database and real session pipeline. Details below.
 
 ---
@@ -12,9 +34,10 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` complete · `[-]` cancelled
 
 | Field | Value |
 |---|---|
-| Current phase | Phase 0 — complete · Phase 1 — next |
+| Current phase | **Phase 1 — COMPLETE** |
 | Last updated | 2026-09-29 |
-| Build passing | Yes — `pnpm lint` and `pnpm build` both clean under strict mode |
+| Build passing | Yes — `tsc`, `pnpm lint`, and `pnpm build` all clean |
+| Next up | Phase 2 (TMDB data layer) |
 | Auth model | **TMDB native accounts + session IDs** (replaces the local mock) |
 | Blockers | **None.** API token verified working end to end. |
 
@@ -114,21 +137,54 @@ Files: `package.json`, `tsconfig.app.json`, `vite.config.ts`, `index.html`, `.en
 
 ## Phase 1 — Theme + routing skeleton (no data yet)
 
-Files created: `src/theme/theme.ts`, `src/context/ThemeContext.tsx`, `src/components/ThemeToggle.tsx`, `src/routes/AppRouter.tsx`, `src/routes/ProtectedRoute.tsx`, `src/layouts/AppLayout.tsx`, `src/components/layout/AppBar.tsx`, `src/components/layout/PageContainer.tsx`, `src/pages/NotFoundPage.tsx`
-Files modified: `src/main.tsx`
+Files created: `src/theme/theme.ts`, `src/context/ThemeContext.tsx`, `src/context/themeContextValue.ts`, `src/utils/storage.ts`, `src/components/ThemeToggle.tsx`, `src/components/layout/AppBar.tsx`, `src/components/layout/PageContainer.tsx`, `src/layouts/AppLayout.tsx`, `src/routes/AppRouter.tsx`, `src/routes/ProtectedRoute.tsx`, `src/pages/{Dashboard,MovieDetails,Favorites,Login,NotFound}Page.tsx`
+Files modified: `src/main.tsx`, `index.html`
+Files deleted: `src/App.tsx` (replaced by the router)
 
-- [ ] Define `buildAppTheme(mode: 'light' | 'dark')` in `src/theme/theme.ts` returning a typed `Theme` with primary/secondary palette, `shape.borderRadius: 12`, and overrides for `Card`, `Button`, `Chip`.
-- [ ] In `ThemeContext.tsx` hold `mode` and `toggleMode`, persist to `localStorage` under `me:theme`, default to `prefers-color-scheme` on first run.
-- [ ] Create `AppLayout.tsx` with a persistent MUI `AppBar`, a `Container maxWidth="lg"` content slot, and an `Outlet` so all three authenticated pages share one chrome.
-- [ ] Wire `AppRouter.tsx` with a `createBrowserRouter` tree: `/login` outside the layout; `/dashboard`, `/dashboard/:id`, `/favorites` inside it; catch-all `*` → `NotFoundPage`.
-- [ ] Have `AppBar.tsx` render `NavLink` items for Dashboard and Favorites with `end` on Dashboard so it does not stay active on `/dashboard/:id`.
-- [ ] Implement `ProtectedRoute.tsx` as a `<Navigate to="/login" state={{ from }} replace />` wrapper; stub it to always pass until Phase 6.
-- [ ] Wrap the tree in `main.tsx:5` as `StrictMode > ThemeProvider > CssBaseline > AuthProvider > MovieProvider > RouterProvider` — MUI and Context must sit above the router so `ProtectedRoute` can read them.
-- [ ] Set `scrollRestoration` in the router config so deep-linking to `/dashboard/603` lands at the top.
+- [x] Define `buildAppTheme(mode: ColorMode): Theme` in `src/theme/theme.ts` — a single factory returning a fully typed theme per mode.
+- [x] Set `cssVariables: true` explicitly. **Verified necessary** — without it `theme.vars` is `undefined` (see API findings below).
+- [x] Use two separate themes via a `mode` argument, not MUI's dual-mode `colorSchemes`. **Verified necessary** — dual-mode leaves `theme.palette.mode` stuck at `'light'` regardless of active mode.
+- [x] Neutral grey surfaces with a **single blue accent** (`#1d6fe0` light, `#64a0f5` dark). No secondary hue — a second accent competes on a dense grid.
+- [x] Verify contrast ratios rather than assume. Measured: 4.77 light / 6.44 dark primary-on-surface, both pass WCAG AA.
+- [x] `AppBar` set to `position="sticky"` and `color="default"` — v9 defaults are `fixed` and `primary`, both of which break the design.
+- [x] Nav uses `contained` for the active item, so active state is a filled blue button rather than blue text alone.
+- [x] **Dark mode confirmed visually by the user** in a browser. Node-level verification had already shown the two themes emit different tokens; the interactive round-trip is now closed.
 
-> **Value-add:** Nesting `/dashboard/:id` *inside* the layout (not as a sibling of `/dashboard`) means zero duplicated chrome while still being a standalone view — the spec's "standalone" requirement is satisfied by not nesting inside the grid page.
+### Verified in browser (headless Chrome, live dev server)
 
-**Exit criteria:** All four routes reachable by URL, theme toggle works, layout renders shared chrome.
+| Route | Renders |
+|---|---|
+| `/` | redirects to `/dashboard` |
+| `/dashboard` | AppBar + wordmark + nav + "Trending" h1 |
+| `/dashboard/550` | "Movie #550" — param read from URL |
+| `/favorites` | "Favorites" + browse button |
+| `/login` | "Sign in to Movie Explorer" |
+| `*` | 404 with recovery link |
+
+Confirmed present on `/dashboard`: `<header>`, brand wordmark, both nav buttons, theme toggle with `aria-label`, `MuiButton-contained` on the active item, and the pre-paint `data-theme="light"` attribute on `<html>`. Emitted CSS variables: `--mui-palette-background-default: #f5f6f8`, `--mui-palette-primary-main: #1d6fe0`.
+
+> **Known gap, tracked for Phase 7:** on `/dashboard/:id` the nav compares `pathname === '/dashboard'`, so **no nav item is highlighted** on a detail page. Intentional for now, not yet decided.
+
+> **Value-add:** the pre-paint script in `index.html` is a hand-rolled replacement for MUI's `getInitColorSchemeScript`, which we gave up by making our own context own the mode. It reads the same `movieexplorer:theme` key. That key is now hardcoded in two places — if it changes, both must be updated.
+
+---
+
+## API Findings (verified against the installed packages, not documentation)
+
+These were all discovered by running the installed code. Each would have produced a **silently wrong** result — a green build, no error, incorrect behavior.
+
+| Finding | Impact if missed |
+|---|---|
+| `theme.vars` is `undefined` unless `cssVariables: true` is set explicitly. It is **not** a v9 default. | Every `theme.vars.*` override silently falls back to defaults. Green build, wrong colors. |
+| Dual-mode `colorSchemes` leaves `theme.palette.mode` stuck at `'light'`. Correct mode is only reachable via `useColorScheme()`. | Any `palette.mode === 'dark'` check is wrong. Costs eleven components if caught late. |
+| `Stack` no longer accepts flexbox props directly — `alignItems`, `justifyContent`, `flexGrow` must move to `sx`. | `tsc` error in every file using `Stack`. Caught immediately by strict mode. |
+| `AppBar` defaults to `position: 'fixed'` and `color: 'primary'`. | A fixed bar overlays the first 56px of every page; a primary bar paints the whole header blue. |
+| Exporting a hook from a component file breaks `react-refresh`. | Lint error; hot reload silently degrades to full reloads. Fixed by splitting `themeContextValue.ts`. |
+| `POST /authentication/token/new` returns `{ success: false }` — must be **GET**. | Silent auth failure with no error message. Recorded in Phase 5. |
+
+> The `colorSchemes` and `cssVariables` findings were both stated incorrectly in the original plan and in an earlier `Agent.MD` draft, based on recollection rather than reading the package. **Verify against the installed version before trusting any API claim in this document.**
+
+**Exit criteria:** all four routes reachable by URL, theme toggle works, layout renders shared chrome. **All met.** Dark mode confirmed visually in a browser.
 
 ---
 
