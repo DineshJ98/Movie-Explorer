@@ -6,13 +6,17 @@ This file serves as the strict operational context and single source of truth fo
 
 ### Current Build State
 
-Phases 0 through 4 are complete and verified. **Every page except favourites renders real
-TMDB data**, and `/dashboard/:id` works as a true cold deep link. **Phase 5, TMDB session
-auth, is next**, promoted ahead of favourites because favourites are account-backed and
-need a signed-in user.
+Phases 0 through 5 are complete and verified. **TMDB session auth is wired end to end**
+using TMDB's password-free redirect flow, and protected routes are gated.
+**Phase 6, account-backed favourites, is next** — the last real feature, and the reason
+auth was promoted ahead of it.
 
-`FavoritesPage` is the last placeholder. The favourites *button* exists on the details page
-but is deliberately disabled until Phase 6.
+`FavoritesPage` is the last placeholder, and the favourites button on the details page is
+still a disabled stub waiting for the account API.
+
+**One step cannot be automated:** the approval click on themoviedb.org needs a real human
+account. Everything before and after it is verified. First manual run: `pnpm dev` → "Sign
+in with TMDB" → confirm you return to `/dashboard` with your avatar in the bar.
 
 ## Active Project Status
 
@@ -181,6 +185,48 @@ synthetic data. `Fetch.disable` when finished.
   overview, backdrop, poster, genres, runtime or tagline (`id=869908`): `credits.cast` and
   `videos.results` come back absent rather than empty, and `character` is `null` for uncredited
   cast. Guard all of them, and test against a real sparse record, not just a popular film.
+
+## TMDB Auth Endpoints (all verified live, 2026-09-29)
+
+- `GET /authentication/token/new` works. **`POST` to the same path returns
+  `{ success: false, status_code: 34 }`** with no token, despite some examples showing POST.
+- **`GET /account` without `session_id` returns 200 with the *API key's own* account**, not
+  an error. Omitting the parameter silently signs the user in as the token owner. Always
+  send it.
+- `POST /authentication/session/new` with an unapproved or already-spent token returns
+  **HTTP 401** with `{ status_code: 17, "Session denied." }`. A mismatched token can instead
+  return **HTTP 200** with `success: false`. Check both — neither the status code nor the
+  `success` flag alone is sufficient.
+- `DELETE /authentication/session` requires `session_id` as a **query parameter**. Omitting
+  it returns 400 "Invalid parameters", and the body form is rejected even though TMDB's docs
+  show one. Always revoke server-side on logout.
+- `account.avatar.tmdb.avatar_path` is `null` when no avatar is uploaded, and
+  `account.name` is frequently `""` even when `username` is set. Always have a fallback.
+
+> **A shared Axios interceptor can corrupt the meaning of an error.** The interceptor in
+> `tmdbClient.ts` rewrites every 401/403 to `TMDB_UNAUTHORIZED`. That is correct for data
+> fetches but wrong for auth: a user who declined approval was told to check
+> `VITE_TMDB_TOKEN`. Endpoint-specific errors must be re-labelled at the call site
+> (`createSession` maps 401 to `SESSION_DENIED`) rather than trusting the global mapping.
+
+## Session Storage Is Untrusted Input
+
+`readStoredSession` validates every field and discards a malformed entry. A user can edit
+localStorage at will, and `session_id` is a **write credential for a real account** — a
+garbage value would fail confusingly on the first `/account` call, and a stale one would
+loop forever if not cleared. Only the five fields in `StoredSession` are ever written.
+
+Router `location.state` does **not** survive the tmdb.org round trip, so the post-login
+destination is persisted separately. Validate it with `/^\/(?!\/)/` so a crafted entry
+cannot turn the callback into an open redirect.
+
+## A client-side SPA cannot keep a secret from its own user
+
+Do not describe this auth flow as production-grade security. The `session_id` lives in
+localStorage, and the person using the app can read it. It is the correct flow for this
+project, not a hardened one. Keep the session out of logs and analytics, and revoke it
+server-side on logout. Never switch to `validate_with_login`: it is strongly discouraged
+by TMDB precisely because it pushes a real account password through the frontend.
 
 ## Type Safety Expectations
 

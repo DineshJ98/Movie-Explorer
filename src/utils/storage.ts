@@ -2,6 +2,7 @@ export const STORAGE_KEYS = {
   theme: 'movieexplorer:theme',
   session: 'me:session',
   favorites: 'movieexplorer:favorites',
+  pendingRedirect: 'movieexplorer:pending-redirect',
 } as const
 
 export function readStoredValue<T>(key: string, fallback: T): T {

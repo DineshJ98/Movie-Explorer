@@ -10,6 +10,7 @@ import { getTrending, searchMovies } from '../api/movieService'
 import { TMDB_NOT_FOUND, TMDB_UNAUTHORIZED } from '../api/tmdbClient'
 import { useDebounce } from '../hooks/useDebounce'
 import type { TmdbMovie } from '../types/tmdb'
+import { useAuth } from './authContextValue'
 import { MovieContext, type LoadStatus, type MovieContextValue } from './movieContextValue'
 
 /** Below this length a query is too broad to be worth a request. */
@@ -39,6 +40,9 @@ function toMessage(error: unknown): string {
 }
 
 export function MovieProvider({ children }: { children: ReactNode }) {
+  const { status: authStatus } = useAuth()
+  const isAuthenticated = authStatus === 'authenticated'
+
   const [query, setQuery] = useState('')
   const [result, setResult] = useState<RequestState>({
     term: '',
@@ -102,12 +106,17 @@ export function MovieProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  // Fetch page 1 whenever the effective term changes. All state updates happen
-  // in the promise callbacks above, never synchronously in this effect body.
+  // Fetch page 1 whenever the effective term changes, and only once a session
+  // exists. This provider wraps the whole app layout, so without the auth gate
+  // it would fire a trending request for anonymous visitors on /login and on
+  // any protected route that is about to redirect. Gating here rather than
+  // moving the provider below ProtectedRoute keeps the loaded list alive across
+  // dashboard -> details -> dashboard navigation, which re-mounting would lose.
   useEffect(() => {
+    if (!isAuthenticated) return
     setStatus('loading')
     void fetchPage(effectiveQuery, 1, 'replace')
-  }, [effectiveQuery, fetchPage])
+  }, [isAuthenticated, effectiveQuery, fetchPage])
 
   useEffect(() => {
     return () => {
