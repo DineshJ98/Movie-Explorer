@@ -6,9 +6,9 @@ This file serves as the strict operational context and single source of truth fo
 
 ### Current Build State
 
-Phases 0, 1, and 2 are complete and verified. The app boots, all routes render, dark mode is confirmed working, and the service layer is proven against the **live TMDB API** (trending, search, details, 404 handling, and image URLs all asserted against real responses). **Phase 3, the `/dashboard` trending grid with search, is next** — it is the first phase that puts real data on screen.
+Phases 0 through 3 are complete and verified. **`/dashboard` renders real trending films with live TMDB posters** — 20 tiles confirmed in a headless browser, skeletons correctly replaced, Load More present. The service layer is proven against the live API. **Phase 4, the `/dashboard/:id` details page, is next.**
 
-**No page renders real data yet.** The services in `src/api/` are built and tested, but only a temporary probe called them, and that probe was removed after verification.
+`MovieDetailsPage` and `FavoritesPage` are still placeholders. Clicking a card lands on a details page showing only the movie id.
 
 ## Active Project Status
 
@@ -86,6 +86,57 @@ These were found by calling the real API, not by reading documentation. Each one
 - **A missing id returns HTTP 404** with `{ status_code: 34 }`. The client maps this to the `TMDB_NOT_FOUND` marker.
 
 > Token handling: `src/api/tmdbClient.ts` warns once at module load if `VITE_TMDB_TOKEN` is absent, and tags failures with exported constants (`TMDB_UNAUTHORIZED`, `TMDB_NOT_FOUND`, `TMDB_MISSING_TOKEN`). Branch on those constants — never string-match an error message.
+
+## Browser Testing Without Puppeteer or Playwright
+
+Neither library is installed. Do not add one just to verify a page. Drive the browser
+directly over the **Chrome DevTools Protocol** using Node's built-in `WebSocket`:
+
+1. `setsid nohup google-chrome --headless=new --no-sandbox --remote-debugging-port=9222 --user-data-dir=/tmp/cprof about:blank &`
+2. `curl -s http://127.0.0.1:9222/json/list` to get the page target's `webSocketDebuggerUrl`
+3. `Page.navigate`, then `Runtime.evaluate` with `returnByValue: true` to inspect and click
+
+**Use `setsid` plus `</dev/null` and `disown`.** A plain `nohup ... &` gets killed when the
+shell command's timeout fires, and the server dies with it.
+
+> **Assert on rendered text, not on the element type you assumed.** Two probes in this
+> project reported false negatives: "End of results" is a `Typography` (`<p>`), not a
+> `<button>`, and the empty state reads "No movies found", not "No results". Both features
+> were working. Before "fixing" a UI bug, confirm the element actually exists with
+> `document.body.innerText.includes(...)`.
+
+## Testing Expectations
+
+A first-paint screenshot is not verification of an interactive feature. Load More, search,
+and the page cap only get exercised by **actually clicking and typing**. This project shipped
+two real bugs that were invisible until the clicks happened: TMDB recycles trending titles
+across pages (duplicates), and a one-character query blanked the grid entirely. Test the
+interaction, not just the initial render.
+
+## React Compiler Lint Rules (these are strict, and they are right)
+
+`eslint-plugin-react-hooks` v7 ships the React Compiler rules. Two of them will reject code that passes in older React projects.
+
+- **`set-state-in-effect`** rejects any `setState` reachable synchronously from an effect body, including through a called function. The fix is **not** to disable the rule. Restructure so the effect only kicks off the async work and every state update happens in a promise callback. `src/context/MovieContext.tsx` is the reference implementation: it calls `fetchPage` from an effect, and all `setState` calls live inside `await`ed callbacks.
+- **`exhaustive-deps`** also warns when a derived value used as a `useMemo` dep is a conditional expression, because it gets a new identity each render. Wrap the derivation in its own `useMemo`.
+
+> Deriving staleness during render (`const isFresh = result.term === activeQuery`) is preferable to clearing state in an effect. It satisfies the linter and avoids the cascading render the rule is warning about.
+
+## TMDB Endpoint Behaviour (verified against the live API, 2026-09-29)
+
+- **`trending/movie/week` lies about its size.** It reports `total_pages: 500`, but real data
+  ends at **page 10**, which is a short page of 19. Beyond that it recycles earlier titles.
+  `MAX_PAGES = 10` in `src/context/MovieContext.tsx` is therefore not arbitrary — it lands
+  exactly on the last real page.
+- **Trending recycles titles *within* the cap too.** The first 10 pages contain 199 results
+  but only 179 unique films. Dedupe by `movie.id` on append or users see repeated cards.
+  Never assume a TMDB page boundary means new content.
+- **Page counts are not item counts.** A page can return 19 or fewer items, so never assert
+  `results.length === 20`; assert `total_pages` or the accumulated total.
+- **`GET /authentication/token/new` works; the equivalent POST does not.**
+- `DELETE /authentication/session` needs the `session_id` as a **query parameter**, not in
+  the body, to revoke a session.
+- Do **not** use `validate_with_login` on user endpoints.
 
 ## Type Safety Expectations
 
