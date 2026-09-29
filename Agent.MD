@@ -6,9 +6,13 @@ This file serves as the strict operational context and single source of truth fo
 
 ### Current Build State
 
-Phases 0 through 3 are complete and verified. **`/dashboard` renders real trending films with live TMDB posters** — 20 tiles confirmed in a headless browser, skeletons correctly replaced, Load More present. The service layer is proven against the live API. **Phase 4, the `/dashboard/:id` details page, is next.**
+Phases 0 through 4 are complete and verified. **Every page except favourites renders real
+TMDB data**, and `/dashboard/:id` works as a true cold deep link. **Phase 5, TMDB session
+auth, is next**, promoted ahead of favourites because favourites are account-backed and
+need a signed-in user.
 
-`MovieDetailsPage` and `FavoritesPage` are still placeholders. Clicking a card lands on a details page showing only the movie id.
+`FavoritesPage` is the last placeholder. The favourites *button* exists on the details page
+but is deliberately disabled until Phase 6.
 
 ## Active Project Status
 
@@ -113,6 +117,40 @@ two real bugs that were invisible until the clicks happened: TMDB recycles trend
 across pages (duplicates), and a one-character query blanked the grid entirely. Test the
 interaction, not just the initial render.
 
+## Responsive Bleed Must Track the Container's Real Gutter
+
+To make a full-bleed element inside MUI's `<Container>`, **never hardcode the negative
+margin**. `Container` padding is **16px at `xs` and 24px from `sm` up**, so a fixed
+`ml: -3` / `calc(100% + 48px)` over-shoots by 8px on a phone and makes the whole page
+scroll sideways. Use `mx: { xs: -2, sm: -3 }` and let the block element size itself.
+
+Check overflow at a real mobile width, not just desktop:
+`document.documentElement.scrollWidth > document.documentElement.clientWidth`.
+
+## Never Verify a Feature at One Viewport
+
+Read more / line-clamping is the clearest example. TMDB overviews top out near 340
+characters, which fits inside 4 lines at 1280px — so the control is correctly **absent**
+there. Only at 390px does it overflow. A desktop-only screenshot proves nothing.
+
+Same for `CastList`: its scroll arrows depend on measured overflow, so they exist at one
+width and not another. Assert on `scrollWidth > clientWidth`, not on a fixed pixel count.
+
+## When a State Cannot Be Reached, Stub the Response
+
+Some branches are unreachable through the live API. The zero-rating guard could not be
+tested: no 0-vote film is reachable via `discover`, `trending`, `search`, or `upcoming`. Rather
+than assume the code is right, intercept the request and fulfil it:
+
+```js
+await cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*/movie/550*', requestStage: 'Request' }] })
+// on Fetch.requestPaused -> cdp.send('Fetch.fulfillRequest', { requestId, responseCode: 200,
+//   responseHeaders: [{ name: 'Content-Type', value: 'application/json' }], body: b64 })
+```
+
+This exercises the real component, the real hook and the real state machine, only with
+synthetic data. `Fetch.disable` when finished.
+
 ## React Compiler Lint Rules (these are strict, and they are right)
 
 `eslint-plugin-react-hooks` v7 ships the React Compiler rules. Two of them will reject code that passes in older React projects.
@@ -137,6 +175,12 @@ interaction, not just the initial render.
 - `DELETE /authentication/session` needs the `session_id` as a **query parameter**, not in
   the body, to revoke a session.
 - Do **not** use `validate_with_login` on user endpoints.
+- **Movie ids rot.** `/dashboard/1399` (a film that existed in 2024) no longer resolves on
+  TMDB and returns no title. Do not hardcode ids in tests or docs without re-checking them.
+- **Every optional field really is optional.** Verified against a movie with no video, cast,
+  overview, backdrop, poster, genres, runtime or tagline (`id=869908`): `credits.cast` and
+  `videos.results` come back absent rather than empty, and `character` is `null` for uncredited
+  cast. Guard all of them, and test against a real sparse record, not just a popular film.
 
 ## Type Safety Expectations
 
