@@ -12,23 +12,11 @@
       name="color-scheme"
       content="light dark"
     />
-    <script>
-      /* Runs before paint so the stored theme never flashes the wrong
-         background. Kept in sync with STORAGE_KEYS.theme in src/utils/storage.ts. */
-      try {
-        var stored = localStorage.getItem('movieexplorer:theme')
-        var mode =
-          stored === 'light' || stored === 'dark'
-            ? stored
-            : window.matchMedia('(prefers-color-scheme: dark)').matches
-              ? 'dark'
-              : 'light'
-        document.documentElement.style.colorScheme = mode
-        document.documentElement.dataset.theme = mode
-      } catch (e) {
-        /* storage blocked; fall through to the React default */
-      }
-    </script>
+    <!--
+      External file, not inline, so the production CSP can keep a strict
+      `script-src 'self'` with no 'unsafe-inline'. Runs before paint.
+    -->
+    <script src="/theme-init.js"></script>
     <title>Movie Explorer</title>
   </head>
   <body>
