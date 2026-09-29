@@ -6,20 +6,19 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` complete · `[-]` cancelled
 
 ## Where We Are
 
-Phases 0, 1, and 2 are complete and verified. The app boots, all routes render,
-dark mode works, and the service layer is proven against the **live TMDB API**.
-**Phase 3 (`/dashboard` trending grid + search) is next** — it is the first phase
-that puts real data on screen, and everything it needs already exists.
+Phases 0 through 3 are complete and verified. **`/dashboard` now renders real
+trending films with live TMDB posters.** Search, debounce, and Load More are built.
+**Phase 4 (`/dashboard/:id` details) is next** — it is the last page before auth.
 
-No page renders real data yet. The services are built and tested, but nothing calls
-them outside the temporary probe used for verification.
+Still placeholders: `MovieDetailsPage` and `FavoritesPage`. Clicking a card today
+lands on a details page that shows only the movie id.
 
 ```
 Phase 0  Foundation .................. DONE
 Phase 1  Theme + routing skeleton .... DONE
 Phase 2  TMDB data layer ............. DONE
-Phase 3  /dashboard trending+search ... NEXT      <- start here
-Phase 4  /dashboard/:id details ...... pending
+Phase 3  /dashboard trending+search ... DONE
+Phase 4  /dashboard/:id details ...... NEXT      <- start here
 Phase 5  TMDB session auth ........... pending
 Phase 6  /favorites, account-backed .. pending
 Phase 7  Hardening + verification .... pending
@@ -37,10 +36,10 @@ installed code rather than reading docs. Several fail silently.
 
 | Field | Value |
 |---|---|
-| Current phase | **Phase 2 — COMPLETE** |
-| Last updated | 2026-09-29 (P2 closed) |
+| Current phase | **Phase 3 — COMPLETE** |
+| Last updated | 2026-09-29 (P3 closed) |
 | Build passing | Yes — `tsc`, `pnpm lint`, and `pnpm build` all clean |
-| Next up | Phase 3 (`/dashboard` trending + search) |
+| Next up | Phase 4 (`/dashboard/:id` details) |
 | Auth model | **TMDB native accounts + session IDs** (replaces the local mock) |
 | Blockers | **None.** API token verified working end to end. |
 
@@ -228,26 +227,72 @@ Files created: `src/types/tmdb.ts`, `src/types/pagination.ts`, `src/api/tmdbClie
 
 ## Phase 3 — `/dashboard` trending + dynamic search
 
-Files created: `src/context/MovieContext.tsx`, `src/hooks/useDebounce.ts`, `src/pages/DashboardPage.tsx`, `src/components/movie/MovieGrid.tsx`, `src/components/movie/MovieCard.tsx`, `src/components/movie/MovieCardSkeleton.tsx`, `src/components/movie/LoadMoreButton.tsx`, `src/components/movie/EmptyState.tsx`, `src/components/SearchBar.tsx`
+Files created: `src/hooks/useDebounce.ts`, `src/context/movieContextValue.ts`, `src/context/MovieContext.tsx`, `src/components/SearchBar.tsx`, `src/components/movie/MovieCard.tsx`, `src/components/movie/MovieCardSkeleton.tsx`, `src/components/movie/MovieGrid.tsx`, `src/components/movie/EmptyState.tsx`, `src/components/movie/LoadMoreButton.tsx`
+Files modified: `src/pages/DashboardPage.tsx`, `src/main.tsx`
 
-- [ ] Implement `useDebounce<T>(value, delay = 400)` returning the debounced value and clearing its timer on unmount.
-- [ ] Put `trending`, `searchResults`, `query`, `setQuery`, `page`, `hasMore`, `status`, `error`, `loadMore`, `retry` in `MovieContext` — the page holds no fetching state of its own. Favorites deliberately live in a separate `FavoritesContext` (Phase 6) so account state and catalog state do not couple.
-- [ ] Model `status` as a discriminated union `'idle' | 'loading' | 'loading-more' | 'success' | 'error'` so `loading-more` renders a spinner without unmounting the grid.
-- [ ] Switch to `searchResults` only when the debounced trimmed query length is ≥ 2; a 1-character query must not fire a request.
-- [ ] Abandon stale responses with a monotonically increasing request ID in a ref so a slow earlier search cannot overwrite a faster later one.
-- [ ] Cancel in-flight Axios requests on unmount and on query change via an `AbortController` signal passed through the service signature.
-- [ ] Build `MovieCard.tsx` as a `Card` with `CardMedia` at `w342`, title clamped to 2 lines, release year, average-vote chip, wrapped in a `Link` to `/dashboard/${movie.id}`.
-- [ ] Build `MovieCardSkeleton.tsx` as an `aspectRatio: '2/3'` MUI `Skeleton` shimmer, rendering 12 on first load to avoid layout shift.
-- [ ] Make `MovieGrid.tsx` responsive via `repeat(auto-fill, minmax(clamp(140px, 22vw, 220px), 1fr))` so it needs no breakpoint props.
-- [ ] Add `SearchBar.tsx` as a debounced `TextField` with a `startAdornment` search icon and a clear button that resets to trending.
-- [ ] Render `EmptyState.tsx` on a zero-result search and a distinct message when trending itself fails, both with `retry`.
-- [ ] Implement `LoadMoreButton.tsx` as a full-width outlined button gated on `hasMore && status !== 'loading-more'`, per the Agent.MD pagination trade-off.
-- [ ] **Cap the dashboard at a sane page limit** (around page 10) and render an "end of list" message beyond it. Trending reports 500 pages, so an uncapped Load More would let a user click through 500 successful loads.
-- [ ] **Never derive `hasMore` from `page < totalPages` alone.** An empty search returns `totalPages: 1` with zero results, so the button would spin forever. The service already guards this; do not reintroduce the naive check in the context.
+- [x] Implement `useDebounce<T>(value, delay = 400)` clearing its timer on unmount.
+- [x] Split the context and its hook into `movieContextValue.ts` and `MovieContext.tsx` — required by the `react-refresh` rule, same reason the theme context is split.
+- [x] Model `status` as the union `'loading' | 'loading-more' | 'success' | 'error'`, so a "load more" spinner is distinct from a first-page load.
+- [x] Switch to search results only when the trimmed query is **2+ characters**.
+- [x] Guard against stale responses with a monotonic `requestIdRef`; a late reply cannot overwrite a fresher one.
+- [x] Abort in-flight requests on new query, on load-more, and on unmount via `AbortController`.
+- [x] Discard results whose `term` no longer matches the active query (`isFresh`), so the previous search never shows under the new one.
+- [x] **Cap paging at 10 pages** and render "End of results" beyond it — trending reports 500 pages.
+- [x] `MovieCard` links to `/dashboard/${movie.id}`, clamps the title to 2 lines, shows year and a rating chip, and renders as an `<a>` via `RouterLink`.
+- [x] `MovieCardSkeleton` renders 12 `aspectRatio: '2/3'` shimmer tiles so the grid does not reflow when content arrives.
+- [x] `MovieGrid` uses `repeat(auto-fill, minmax(clamp(140px, 22vw, 220px), 1fr))` — fluid at every width with no breakpoint props.
+- [x] `SearchBar` is a debounced `TextField` with a search icon and a clear button that returns to trending.
+- [x] Distinct `EmptyState` for zero search results versus a trending failure.
+- [x] `LoadMoreButton` disables during `loading-more` and shows a `CircularProgress`.
 
-> **Value-add:** Debounce the *query* (in context), not the *results* (in the page). Debouncing at the consumer level is the classic mistake that still lets a fast typist fire six requests.
+### Verified in a real browser (headless Chrome over CDP, real dev server)
 
-**Exit criteria:** Trending grid loads, search swaps results, Load More appends, skeletons show during fetch, no stale-response overwrite.
+No Puppeteer or Playwright is installed, so the browser was driven directly over the
+**Chrome DevTools Protocol** using Node 24's built-in `WebSocket`. That let the test
+actually click "Load more" instead of only inspecting the first paint.
+
+| Scenario | Result |
+|---|---|
+| Trending tiles on first load | 20, all unique ids |
+| Live TMDB posters | 20 real `image.tmdb.org` URLs, 0 placeholders |
+| Card links | 20 anchors to `/dashboard/:id` |
+| Skeletons after load | **0** — replaced correctly |
+| Grid CSS | `repeat(auto-fill, minmax(clamp(140px, 22vw, 220px), 1fr))` |
+| **Load more, clicked 9×** | grew 20 → 40 → 58 → 76 → 96 → 110 → 126 → 140 → 156 → **172** |
+| **Page cap** | button gone after page 10, exactly as designed |
+| **"End of results"** | rendered as `<p>` |
+| **Duplicate audit** | **172 rendered / 172 unique — no duplicates** |
+| JS errors during the run | none |
+| Search `"blade runner"` (1 page) | 16 cards, no Load more, "End of results" shown |
+| Search with no matches | 0 cards, `EmptyState` "No movies found" shown |
+| Single character `"b"` | trending retained (20 cards), **no request sent** |
+| Clearing the box | returns to trending, Load more restored |
+
+> **Two real bugs were found by this testing and fixed. Both were invisible in the first-load check.**
+
+**1. Duplicate movies (fixed).** The capped list rendered **199 tiles containing only 179
+unique films**. TMDB's trending endpoint recycles titles *within* the first 10 pages, not
+only beyond them — page 10 is a short page of 19, and page 11 starts re-serving earlier
+titles. The cap alone did not prevent this. Fixed by deduping on `movie.id` inside the
+`setResult` updater, preserving order. The per-click deltas of 14–20 (instead of a flat 20)
+are the dedupe visibly working.
+
+**2. A one-character query blanked the grid (fixed).** Typing a single character produced
+**zero cards and no empty state** — the worst possible outcome. Two causes: the display
+logic tested `!activeQuery`, which is false for `"b"`, so `trending` was forced to `[]`;
+and `fetchPage` branched on `term.length > 0`, so it fired a pointless search request for a
+one-character term. Fixed by introducing `effectiveQuery`, which treats any query below
+`MIN_QUERY_LENGTH` as *no query at all*. Trending stays on screen, the subtitle stays
+"Popular films this week", and no request is sent until the second character is typed.
+
+> **A caveat worth recording: the first automated test reported a false negative.** The probe
+> searched for a `<button>` containing "End of results", but `LoadMoreButton` renders that
+> text as a `Typography` (`<p>`). The feature was working; the *test* was wrong. The same
+> mistake made a working empty state look broken — it renders "No movies found", not
+> "No results". Assert on the rendered text, not on the element type you assumed.
+
+**Exit criteria: met.** Trending grid loads, search swaps results, Load More appends,
+skeletons show during fetch, the cap holds at 10 pages, and there are no duplicates.
 
 ---
 

@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { RouterProvider } from 'react-router-dom'
 import './index.css'
+import { MovieProvider } from './context/MovieContext'
 import { AppThemeProvider } from './context/ThemeContext'
 import router from './routes/AppRouter'
 
@@ -14,7 +15,9 @@ if (container === null) {
 createRoot(container).render(
   <StrictMode>
     <AppThemeProvider>
-      <RouterProvider router={router} />
+      <MovieProvider>
+        <RouterProvider router={router} />
+      </MovieProvider>
     </AppThemeProvider>
   </StrictMode>,
 )
