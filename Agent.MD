@@ -6,7 +6,9 @@ This file serves as the strict operational context and single source of truth fo
 
 ### Current Build State
 
-Phase 0 and Phase 1 are code-complete. The app boots, all routes render, and `tsc` / `pnpm lint` / `pnpm build` are clean. Theme and layout are built; no page has real data yet. **Phase 2, the TMDB data layer, is the next phase** and the API token is already verified working against the live API.
+Phases 0, 1, and 2 are complete and verified. The app boots, all routes render, dark mode is confirmed working, and the service layer is proven against the **live TMDB API** (trending, search, details, 404 handling, and image URLs all asserted against real responses). **Phase 3, the `/dashboard` trending grid with search, is next** — it is the first phase that puts real data on screen.
+
+**No page renders real data yet.** The services in `src/api/` are built and tested, but only a temporary probe called them, and that probe was removed after verification.
 
 ## Active Project Status
 
@@ -70,6 +72,20 @@ These were found by running the installed code. Each fails **silently** or with 
 - **Never export a hook from a file that also exports a component.** It breaks `react-refresh` and the lint rule catches it. The theme context and its hook are split across `ThemeContext.tsx` and `themeContextValue.ts` for this reason.
 
 > Earlier drafts of this file asserted v9 behaviours from recollection and were wrong on two counts. **Verify any API claim against the installed package before relying on it.**
+
+## TMDB API Gotchas (verified live, 2026-09-29)
+
+These were found by calling the real API, not by reading documentation. Each one produces a wrong result with no error message.
+
+- **An empty search returns `total_pages: 1` with zero results.** Never derive "has more" from `page < total_pages` alone — a Load More button built that way spins forever. `movieService.toPagedResult` guards with `items.length > 0 && page < totalPages`. Do not reintroduce the naive check.
+- **Trending reports 500 pages.** Load More is effectively unbounded. The dashboard caps pages and shows an end-of-list message.
+- **List and detail movie shapes are not interchangeable.** List items carry `genre_ids: number[]`; the detail endpoint carries `genres: TmdbGenre[]`. There are two separate types for this reason.
+- **`GET /authentication/token/new` — the verb is GET.** POST returns `{ "success": false }` with no explanation.
+- **`DELETE /authentication/session` takes `session_id` as a query param.** TMDB's own docs show a JSON body; that form returns **405**.
+- **Favorite endpoints are asymmetric.** Writes go to `POST /account/{id}/favorite`, reads come from `GET /account/{id}/favorite/movies`. The write has no `/movies` suffix.
+- **A missing id returns HTTP 404** with `{ status_code: 34 }`. The client maps this to the `TMDB_NOT_FOUND` marker.
+
+> Token handling: `src/api/tmdbClient.ts` warns once at module load if `VITE_TMDB_TOKEN` is absent, and tags failures with exported constants (`TMDB_UNAUTHORIZED`, `TMDB_NOT_FOUND`, `TMDB_MISSING_TOKEN`). Branch on those constants — never string-match an error message.
 
 ## Type Safety Expectations
 

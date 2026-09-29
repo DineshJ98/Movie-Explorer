@@ -6,16 +6,19 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` complete · `[-]` cancelled
 
 ## Where We Are
 
-Phases 0 and 1 are complete and verified. The app boots, all five routes render
-real content, dark mode is confirmed working in a browser, and the theme builds
-clean in both modes. **Phase 2 (TMDB data layer) is the next phase** — it is the
-first one to touch the live API, and the token is already verified working.
+Phases 0, 1, and 2 are complete and verified. The app boots, all routes render,
+dark mode works, and the service layer is proven against the **live TMDB API**.
+**Phase 3 (`/dashboard` trending grid + search) is next** — it is the first phase
+that puts real data on screen, and everything it needs already exists.
+
+No page renders real data yet. The services are built and tested, but nothing calls
+them outside the temporary probe used for verification.
 
 ```
 Phase 0  Foundation .................. DONE
 Phase 1  Theme + routing skeleton .... DONE
-Phase 2  TMDB data layer ............. NEXT      <- start here
-Phase 3  /dashboard trending+search ... pending
+Phase 2  TMDB data layer ............. DONE
+Phase 3  /dashboard trending+search ... NEXT      <- start here
 Phase 4  /dashboard/:id details ...... pending
 Phase 5  TMDB session auth ........... pending
 Phase 6  /favorites, account-backed .. pending
@@ -34,10 +37,10 @@ installed code rather than reading docs. Several fail silently.
 
 | Field | Value |
 |---|---|
-| Current phase | **Phase 1 — COMPLETE** |
-| Last updated | 2026-09-29 |
+| Current phase | **Phase 2 — COMPLETE** |
+| Last updated | 2026-09-29 (P2 closed) |
 | Build passing | Yes — `tsc`, `pnpm lint`, and `pnpm build` all clean |
-| Next up | Phase 2 (TMDB data layer) |
+| Next up | Phase 3 (`/dashboard` trending + search) |
 | Auth model | **TMDB native accounts + session IDs** (replaces the local mock) |
 | Blockers | **None.** API token verified working end to end. |
 
@@ -190,22 +193,36 @@ These were all discovered by running the installed code. Each would have produce
 
 ## Phase 2 — TMDB data layer (types → client → service)
 
-Files created: `src/types/tmdb.ts`, `src/api/tmdbClient.ts`, `src/api/movieService.ts`, `src/utils/imageUrl.ts`
+Files created: `src/types/tmdb.ts`, `src/types/pagination.ts`, `src/api/tmdbClient.ts`, `src/api/movieService.ts`, `src/utils/imageUrl.ts`
 
-- [ ] Define `TmdbMovie`, `TmdbMovieDetail`, `TmdbPagedResponse<T>`, `TmdbGenre`, `TmdbCastMember`, `TmdbVideo`, `TmdbImageConfig` in `src/types/tmdb.ts` — every field optional except `id` and `title`, since TMDB omits fields silently and strict models otherwise crash on a null `poster_path`.
-- [ ] Define `PagedResult<T> = { page: number; totalPages: number; totalResults: number; items: T[] }` as the app-level shape so pages never import the raw `TmdbPagedResponse`.
-- [ ] Model the TMDB favorite-list item separately from `TmdbMovie`: it returns `genre_ids: number[]` instead of a `genres: TmdbGenre[]` object array, so reusing `TmdbMovie` will fail strict typing.
-- [ ] Build `tmdbClient.ts` as a single `axios.create` with `baseURL: '/tmdb'`, a Bearer `Authorization` request interceptor, and a default `language: 'en-US'` param.
-- [ ] Add a response interceptor normalizing `results: []` and coercing `total_pages: 0` so no page null-checks the envelope.
-- [ ] Implement `getTrending(page)`, `searchMovies(query, page)`, `getMovieDetails(id)` in `movieService.ts`, each returning `PagedResult` or `TmdbMovieDetail` — no component imports Axios directly.
-- [ ] Write `getPosterUrl(path, size)` in `src/utils/imageUrl.ts` with a `'w500'` default and a `null` path fallback so a missing poster renders a placeholder.
-- [ ] Write typed `sessionStorage.ts` helpers `readJson<T>(key, fallback)`, `writeJson(key, value)`, `removeKey(key)`, each wrapped in try/catch for the Safari private-mode quota throw.
-- [ ] Add a response interceptor that flags `401` distinctly so the auth layer can trigger re-login instead of the UI showing a generic failure.
-- [ ] **Do not build `authService` or `accountService` here** — they depend on types settled in Phase 5 and are scoped there.
+- [x] Define `TmdbMovie`, `TmdbMovieDetail`, `TmdbPagedResponse<T>`, `TmdbGenre`, `TmdbCastMember`, `TmdbCrewMember`, `TmdbVideo`, `TmdbProductionCompany`, `TmdbCredits` — every field optional except `id` and `title`, since TMDB omits fields rather than sending nulls.
+- [x] Define `PagedResult<T> = { page, totalPages, totalResults, items, hasMore }` in `src/types/pagination.ts` so no page imports the raw TMDB envelope.
+- [x] Add a **separate** `TmdbMovieListResponse` type rather than reusing the detail type for list endpoints — list items carry `genre_ids: number[]` where the detail endpoint carries `genres: TmdbGenre[]`, so one shared type fails strict checking.
+- [x] Build `tmdbClient.ts` as a single `axios.create` with `baseURL: '/tmdb'`, a 15s timeout, a default `language: 'en-US'` param, and a Bearer `Authorization` request interceptor.
+- [x] Warn once at module load when `VITE_TMDB_TOKEN` is absent, so an empty token produces a named failure instead of a confusing 401.
+- [x] Tag 401/403 as `TMDB_UNAUTHORIZED`, 404 as `TMDB_NOT_FOUND`, and a missing token as `TMDB_MISSING_TOKEN` in the response interceptor so callers branch on a constant rather than string-matching a message.
+- [x] Implement `getTrending(page)`, `searchMovies(query, page)`, and `getMovieDetails(id)` — each accepting an optional `AbortSignal` so callers can cancel.
+- [x] `getMovieDetails` requests `append_to_response=credits,videos` in a single round trip so cast and trailers arrive with the main payload rather than as a second waterfall.
+- [x] Write `getImageUrl` returning `null` for a missing path, plus `getPosterUrl` (with a placeholder fallback), `getBackdropUrl`, and `getAvatarUrl`.
 
-> **Value-add:** The service layer returning a normalized `PagedResult` means grid, favorites, and search consume one shape. When TMDB renames a field you change one mapper, not four components.
+### Verified against the live API (real client, real dev server)
 
-**Exit criteria:** A temporary console call returns a typed, correctly-shaped trending payload.
+| Call | Result |
+|---|---|
+| `getTrending(1)` | 20 items, 500 pages, `hasMore: true` |
+| `getTrending(20)` | 20 items, `hasMore: true` |
+| `searchMovies('zzzzqqqxx')` | 0 items, `totalResults: 0`, **`totalPages: 1`**, `hasMore: false` |
+| `searchMovies('bat')` | 20 items, first = `Bat★21` |
+| `getMovieDetails(550)` | Fight Club, runtime 139, 2 genres, 76 cast, 3 YouTube trailers |
+| `getMovieDetails(999999999)` | throws `TMDB_NOT_FOUND`, HTTP 404 |
+| `getPosterUrl(path)` | `https://image.tmdb.org/t/p/w342/39aMkR8Y5vhCG9dTkjiqRl8AVqp.jpg` |
+| `getImageUrl(null)` | `null` |
+
+> **The empty-search envelope is the reason `hasMore` is computed, not read.** TMDB returns `total_pages: 1` for a search with zero results. A naive `page < total_pages` reports "there is more" when there is nothing, and the Load More button would spin forever. The guard is `items.length > 0 && page < totalPages`.
+
+> **Trending reports 500 pages.** "Load More" is therefore effectively unbounded — 500 clicks would all succeed. Phase 3 should cap the dashboard at a sane limit and show an end-of-list message rather than letting the user scroll forever. Recorded in the Phase 3 checklist.
+
+**Exit criteria:** a temporary probe page exercised all three services against the live API and asserted the envelope edge cases. **Met.** The probe was removed after verification and is not part of the app.
 
 ---
 
@@ -225,6 +242,8 @@ Files created: `src/context/MovieContext.tsx`, `src/hooks/useDebounce.ts`, `src/
 - [ ] Add `SearchBar.tsx` as a debounced `TextField` with a `startAdornment` search icon and a clear button that resets to trending.
 - [ ] Render `EmptyState.tsx` on a zero-result search and a distinct message when trending itself fails, both with `retry`.
 - [ ] Implement `LoadMoreButton.tsx` as a full-width outlined button gated on `hasMore && status !== 'loading-more'`, per the Agent.MD pagination trade-off.
+- [ ] **Cap the dashboard at a sane page limit** (around page 10) and render an "end of list" message beyond it. Trending reports 500 pages, so an uncapped Load More would let a user click through 500 successful loads.
+- [ ] **Never derive `hasMore` from `page < totalPages` alone.** An empty search returns `totalPages: 1` with zero results, so the button would spin forever. The service already guards this; do not reintroduce the naive check in the context.
 
 > **Value-add:** Debounce the *query* (in context), not the *results* (in the page). Debouncing at the consumer level is the classic mistake that still lets a fast typist fire six requests.
 
