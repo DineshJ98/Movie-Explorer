@@ -208,6 +208,43 @@ still served and only unmatched paths fall through to `index.html`.
 a rebuild, not just a redeploy, and a missing token produces a wall of 401s rather than a
 build error.
 
+## What is and is not a secret in this app
+
+**The TMDB read token is public, by necessity.** `VITE_`-prefixed variables are inlined
+into the client bundle, so `VITE_TMDB_TOKEN` is readable by anyone who views source.
+This is unavoidable for a client-side TMDB app — the browser has to make the request. A
+v4 Read Access Token can only read public catalogue data; it cannot modify an account or
+read a watchlist. Rotate at TMDB → Settings → API if it leaks.
+
+**`session_id` is the real credential, not the token.** It is a write credential for a
+user's TMDB account, and it lives in `localStorage` (`STORAGE_KEYS.session`). Anything
+running on the origin can read it. This is the accepted trade-off of a no-backend app,
+not a bug — but it is why the CSP matters.
+
+`.env.local` is git-ignored via `.gitignore` and was never committed (verified across all
+refs). Re-verify with `git log --all -p | grep -cF "$TOKEN"` after any change.
+
+## Content-Security-Policy (added 2026-09-30)
+
+Configured in `vercel.json`, not `index.html`, so it is enforced by the platform and
+cannot be forgotten. Test it locally with `pnpm build` plus a static server that applies
+the same headers — `vite preview` ignores `vercel.json` entirely.
+
+> **A CSP must be tested by running the app, never by reading it.** The first draft
+> silently broke the trailer embed: `frame-src` was unset, so it fell back to
+> `default-src 'self'` and blocked `youtube-nocookie.com` on every movie page. It is
+> invisible in review and only shows up in a browser. Any new outbound origin — an image
+> host, a font CDN, an embed — needs a matching directive.
+
+The pre-paint theme script in `index.html` was moved to `public/theme-init.js` so that
+`script-src` could stay `'self'` with no `'unsafe-inline'`. A classic script in `<head>`
+(no `type=module`, no `async`/`defer`) still blocks parsing and runs before paint, so
+the no-flash behaviour is unchanged. **Do not inline a script back into `index.html`** —
+it will silently force `'unsafe-inline'` onto the one directive that matters.
+
+`style-src` does need `'unsafe-inline'`: MUI injects styles at runtime. That is
+acceptable — `style-src` is far less dangerous than `script-src`.
+
 ## TMDB Auth Endpoints (all verified live, 2026-09-29)
 
 - `GET /authentication/token/new` works. **`POST` to the same path returns
