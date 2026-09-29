@@ -92,21 +92,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [stored])
 
-  const beginLogin = useCallback(() => {
+  const beginLogin = useCallback(async (): Promise<void> => {
     setError(null)
 
-    const start = async () => {
-      try {
-        const requestToken = await createRequestToken()
-        // Full navigation on purpose: this leaves the app for tmdb.org and
-        // cannot be done with the client-side router.
-        window.location.assign(buildApprovalUrl(requestToken))
-      } catch (e) {
-        setError(toMessage(e))
-      }
+    try {
+      const requestToken = await createRequestToken()
+      // Full navigation on purpose: this leaves the app for tmdb.org and
+      // cannot be done with the client-side router.
+      window.location.assign(buildApprovalUrl(requestToken))
+    } catch (e) {
+      setError(toMessage(e))
+      // Swallowed rather than rethrown, but the caller needs to know the
+      // navigation never happened so it can re-enable its button. Without this
+      // the user is stuck on a disabled "Redirecting to TMDB" button with no
+      // way to retry.
+      throw e
     }
-
-    void start()
   }, [])
 
   const completeLogin = useCallback(async (requestToken: string): Promise<boolean> => {

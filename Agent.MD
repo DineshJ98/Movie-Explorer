@@ -186,6 +186,28 @@ synthetic data. `Fetch.disable` when finished.
   `videos.results` come back absent rather than empty, and `character` is `null` for uncredited
   cast. Guard all of them, and test against a real sparse record, not just a popular film.
 
+## The dev proxy does not exist in production (cost a real bug, 2026-09-30)
+
+`vite.config.ts` proxies `/tmdb` → `api.themoviedb.org/3`. That proxy lives in the dev
+server only. A hardcoded `baseURL: '/tmdb'` therefore **silently 404s in any deployed
+build**, and it broke sign-in on Vercel because `GET /authentication/token/new` never
+reached TMDB. `import.meta.env.DEV` now switches between the proxy and the real origin.
+
+> **Never verify a deployment-sensitive change with `pnpm dev` alone.** Run
+> `pnpm build && pnpm exec vite preview` before believing it works; `vite preview` serves
+> the real bundle with no dev proxy and no rewrite layer, so it reproduces production.
+> Both of the bugs fixed here passed every dev-server test.
+
+A Vite SPA on Vercel also needs `vercel.json` with
+`{"rewrites":[{"source":"/(.*)","destination":"/index.html"}]}`. Without it every client
+route 404s on a hard load, including `/auth/callback` — the URL TMDB redirects users to.
+Vercel evaluates `rewrites` *after* the filesystem check, so hashed `/assets/` files are
+still served and only unmatched paths fall through to `index.html`.
+
+`VITE_`-prefixed variables are **inlined at build time**. Adding or changing one requires
+a rebuild, not just a redeploy, and a missing token produces a wall of 401s rather than a
+build error.
+
 ## TMDB Auth Endpoints (all verified live, 2026-09-29)
 
 - `GET /authentication/token/new` works. **`POST` to the same path returns
