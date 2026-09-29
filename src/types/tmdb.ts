@@ -34,7 +34,8 @@ export interface TmdbGenre {
 export interface TmdbCastMember {
   id: number
   name: string
-  character?: string
+  /** TMDB returns null, not an empty string, when a character is uncredited. */
+  character?: string | null
   profile_path?: string | null
   order?: number
   known_for_department?: string

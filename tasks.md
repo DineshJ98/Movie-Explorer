@@ -6,19 +6,21 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` complete · `[-]` cancelled
 
 ## Where We Are
 
-Phases 0 through 3 are complete and verified. **`/dashboard` now renders real
-trending films with live TMDB posters.** Search, debounce, and Load More are built.
-**Phase 4 (`/dashboard/:id` details) is next** — it is the last page before auth.
+Phases 0 through 4 are complete and verified. **Every page except favourites renders
+real TMDB data**, and `/dashboard/:id` works as a true cold deep link. **Phase 5
+(TMDB session auth) is next**, promoted ahead of favourites because favourites are
+account-backed and need a signed-in user.
 
-Still placeholders: `MovieDetailsPage` and `FavoritesPage`. Clicking a card today
-lands on a details page that shows only the movie id.
+`FavoritesPage` is the last placeholder. The favourites *button* exists on the
+details page but is deliberately disabled until Phase 6.
 
 ```
 Phase 0  Foundation .................. DONE
 Phase 1  Theme + routing skeleton .... DONE
 Phase 2  TMDB data layer ............. DONE
 Phase 3  /dashboard trending+search ... DONE
-Phase 4  /dashboard/:id details ...... NEXT      <- start here
+Phase 4  /dashboard/:id details ...... DONE
+Phase 5  TMDB session auth ........... NEXT      <- start here
 Phase 5  TMDB session auth ........... pending
 Phase 6  /favorites, account-backed .. pending
 Phase 7  Hardening + verification .... pending
@@ -36,10 +38,10 @@ installed code rather than reading docs. Several fail silently.
 
 | Field | Value |
 |---|---|
-| Current phase | **Phase 3 — COMPLETE** |
-| Last updated | 2026-09-29 (P3 closed) |
+| Current phase | **Phase 4 — COMPLETE** |
+| Last updated | 2026-09-29 (P4 closed) |
 | Build passing | Yes — `tsc`, `pnpm lint`, and `pnpm build` all clean |
-| Next up | Phase 4 (`/dashboard/:id` details) |
+| Next up | Phase 5 (TMDB session auth) |
 | Auth model | **TMDB native accounts + session IDs** (replaces the local mock) |
 | Blockers | **None.** API token verified working end to end. |
 
@@ -298,23 +300,84 @@ skeletons show during fetch, the cap holds at 10 pages, and there are no duplica
 
 ## Phase 4 — `/dashboard/:id` deep-link details
 
-Files created: `src/hooks/useMovieDetails.ts`, `src/pages/MovieDetailsPage.tsx`, `src/components/movie/DetailSkeleton.tsx`, `src/components/movie/FavoriteButton.tsx`, `src/components/movie/CastList.tsx`
+Files created: `src/hooks/useMovieDetails.ts`, `src/components/movie/DetailSkeleton.tsx`, `src/components/movie/CastList.tsx`, `src/components/movie/FavoriteButton.tsx`, `src/components/ExpandableText.tsx`, `src/utils/format.ts`
+Files modified: `src/pages/MovieDetailsPage.tsx`, `src/components/layout/PageContainer.tsx`, `src/types/tmdb.ts`
 
-> `FavoriteButton` ships in this phase as a **presentational stub** with no click handler. Its data source (`FavoritesContext`) does not exist until Phase 6, so wiring it here would be building against an unwritten API.
+- [x] `useMovieDetails(id)` with a `'loading' | 'success' | 'error'` union, an `AbortController` cleaned up on unmount, a `requestIdRef` so a late reply cannot overwrite a fresher one, and a `retry` that bumps a counter rather than storing the id.
+- [x] **Fetches purely from the URL param**, never from `MovieContext`. A cold deep link has no list loaded, and reading from a list cache is what makes detail pages break on refresh and on shared links.
+- [x] Stale results are discarded by comparing the state's id against the requested id, so the previous movie never shows under a new URL.
+- [x] `parseId` trims and matches `^\d+$` before `Number()`, then requires an integer > 0. `Number('')` is `0` and `Number('abc')` is `NaN`, so without this the service gets asked for a movie that cannot exist. Renders `EmptyState` instead.
+- [x] Split `MovieDetailsPage` into the page (validates the param) and `MovieDetailsView` (calls the hook) so the hook is never called with an invalid id.
+- [x] Single request with `append_to_response=credits,videos`, so cast and trailer arrive with the main payload instead of a second waterfall round trip.
+- [x] `src/utils/format.ts` — `formatYear`, `formatReleaseDate`, `formatRuntime`, `formatRating`, `formatCount`. Each returns `null` for unusable input so the field can be omitted rather than printing "N/A".
+- [x] `formatReleaseDate` rejects rolled-over dates: `new Date('2023-02-31')` silently becomes 3 March, so the UTC month and day are re-checked after construction.
+- [x] Full-bleed backdrop with a gradient fade into the page, marked `aria-hidden` since the title is repeated as the `h1`.
+- [x] Two-column grid — poster beside metadata on `md`+, stacked on mobile.
+- [x] Title, release date, runtime, status and genre `Chip`s, plus a star `Rating`.
+- [x] `ExpandableText` clamps the overview to 4 lines with a Read more toggle, driven by **measured overflow** rather than character count, so the control only appears when it is needed.
+- [x) YouTube trailer in a 16:9 `Box` via `youtube-nocookie.com`, preferring an official trailer then any trailer, and the whole section is omitted when there is none.
+- [x] `CastList` — horizontal scroll, circular avatars, capped at 12 with a "+N more cast members" summary. Overflow arrows render only when the row actually overflows, measured after layout.
+- [x] Cast members without a `profile_path` fall back to initials rather than a broken image.
+- [x] `vote_average` of 0 renders "Not rated yet" with no stars, no `/10` and no vote count, because TMDB's 0 means "no votes yet", not a universally panned film.
+- [x] `FavoriteButton` ships as a **disabled** stub. It has no click handler: `FavoritesContext` does not exist until Phase 6, and favourites are stored against a TMDB account, so wiring it now would mean guessing an API. Disabled rather than inert so the page never ships a control that silently does nothing.
 
-- [ ] Implement `useMovieDetails(id)` with a `'loading' | 'success' | 'error'` union, an `AbortController` tied to the `id` param, and retry on error.
-- [ ] Call `/movie/${id}?append_to_response=credits,videos` in one round trip so cast and trailer arrive with the main payload instead of a second waterfall request.
-- [ ] Validate `id` in `MovieDetailsPage` with `Number.isInteger` and render `EmptyState` on a non-numeric param instead of firing the service.
-- [ ] Build a two-column `Grid` — backdrop on top, poster and metadata card below on `md`+; stacked on mobile — using a 16:9 backdrop and `w342` poster.
-- [ ] Render title, release year, runtime formatted from `runtime` minutes, genres as `Chip`s, and `overview` with a "Read more" collapse past 4 lines.
-- [ ] Show a YouTube trailer via `videos.results.find(v => v.site === 'YouTube' && v.type === 'Trailer')` in a responsive aspect-ratio `Box`, falling back to the backdrop when absent.
-- [ ] Build `CastList.tsx` as a horizontally scrolling `Stack` of circular profile images, limited to 12 with an overflow count label.
-- [ ] Guard invalid `vote_average` so a 0.0 rating displays as "Not rated" rather than a misleading zero.
-- [ ] Make the page work on a cold deep link with zero context state by fetching entirely from the `id` param — no reliance on a previously-loaded list.
+### Verified in a real browser (headless Chrome over CDP)
 
-> **Value-add:** Fetching purely from the URL param is what makes the route a true deep link. Reading from a list cache breaks on refresh and on shared links — the most common review finding on this kind of build.
+| Scenario | Result |
+|---|---|
+| **Cold deep link `/dashboard/550`** | "Fight Club" renders with **no list ever loaded** |
+| `h1` count | exactly 1, no duplicate heading |
+| Chips | `15 Oct 1999`, `2h 19m`, `Released`, `Drama`, `Thriller` |
+| Rating | `8.4/10` |
+| Poster | live `image.tmdb.org` URL |
+| Backdrop | loaded |
+| Cast | 12 avatars + "+64 more cast members" |
+| Trailer | `youtube-nocookie.com/embed/dfeUzm6KF4g` |
+| Favourite stub | present and disabled |
+| Skeletons after load | 0 |
+| Invalid param `/dashboard/abc` | `EmptyState` "That is not a valid movie link" |
+| Nonexistent id `/dashboard/9999999` | 404 mapped to "We could not find a movie with id 9999999…" + Retry |
+| **Client-side nav `/dashboard/550` → `/278`** | "The Shawshank Redemption", 1 `h1`, 0 stale skeletons, no error |
+| **Worst case `id=869908`** (no video, cast, overview, backdrop **or poster**) | placeholder poster, sections omitted, **0 JS errors** |
+| Cast scroll arrows | left disabled at start, right enabled |
+| JS errors across all runs | none |
 
-**Exit criteria:** Cold deep link to `/dashboard/550` renders fully after a hard refresh.
+> **Three real bugs were caught and fixed by this testing.** None were visible from a
+> first-load desktop screenshot.
+
+**1. "Read more" disappeared when clicked (fixed).** `ExpandableText` measured overflow
+with `scrollHeight > clientHeight`. Once expanded, the element is unclamped, so those two
+values are equal, the text looks like it fits, and the toggle disappeared — leaving **no way
+to collapse the text again**. Fixed by skipping the measurement while expanded, so the
+control becomes "Read less" and stays.
+
+**2. Horizontal scroll on mobile (fixed).** The backdrop used a hardcoded
+`width: calc(100% + 48px); ml: -3` to bleed past the `Container`. But MUI's `Container`
+padding is **16px at `xs` and 24px from `sm`**, so the 24px offset over-shot by 8px and the
+page scrolled sideways on a 390px screen. Fixed with `mx: { xs: -2, sm: -3 }`, which tracks
+the real responsive gutter instead of guessing it.
+
+**3. Poster off-centre on mobile (fixed).** The poster is capped at 220px but the mobile grid
+column is 358px, leaving it hugging the left edge. Now centred — verified at 69px on each side.
+
+**Read more verified at three widths.** TMDB overviews top out around 340 characters, which
+fits in 4 lines on desktop. At 1280px and 700px the toggle is correctly **absent**
+(`box === scroll === 102`); only at 390px does the text overflow (`102` vs `179`) and the
+toggle appear. Measuring it at one width would have missed this entirely.
+
+**The 0-rating guard was verified by stubbing the API.** No 0-vote film is reachable through
+TMDB's discover, trending, or search endpoints, so rather than assume, the response was
+intercepted over CDP `Fetch.fulfillRequest` with a synthetic `vote_average: 0`. Result:
+"Not rated yet" rendered, **0** star icons, no `/10`, no vote count.
+
+> **Two more false negatives in my own probes**, same class as the Phase 3 ones. A test
+> reported "no error alert" for `/dashboard/9999999` purely because it sampled the first few
+> lines of the body, which were the nav; the alert was present a second later. And
+> `/dashboard/1399` was used to force the text clamp, but that id no longer exists on TMDB.
+> **Always confirm a missing element is really absent before changing code.**
+
+**Exit criteria: met.** Cold deep link to `/dashboard/550` renders fully after a hard
+refresh, and every missing-data path degrades cleanly.
 
 ---
 
