@@ -7,7 +7,7 @@ import {
   deleteSession,
   getAccount,
 } from '../api/authService'
-import { TMDB_UNAUTHORIZED } from '../api/tmdbClient'
+import { tokenAdvice } from '../utils/apiErrors'
 import { AuthContext, type AuthContextValue, type AuthStatus } from './authContextValue'
 import {
   readStoredSession,
@@ -15,21 +15,31 @@ import {
   writeStoredSession,
 } from '../utils/sessionStorage'
 import type { TmdbAccount } from '../types/tmdbAuth'
+import { TMDB_UNAUTHORIZED } from '../api/tmdbClient'
 
-function toMessage(error: unknown): string {
-  if (error instanceof Error) {
-    if (error.message === SESSION_DENIED) {
-      return 'TMDB did not approve that sign-in. It may have expired, or already been used.'
-    }
-    if (error.message.includes('did not return a request token')) {
-      return 'TMDB is not returning an approval token right now. Please try again shortly.'
-    }
-    if (error.message.includes('did not return an account')) {
-      return 'That session could not be resolved to a TMDB account.'
-    }
-    if (error.message === TMDB_UNAUTHORIZED) {
-      return 'TMDB rejected the API token. Check VITE_TMDB_TOKEN in your .env.local file.'
-    }
+/**
+ * Auth failures need more specific wording than a generic request failure.
+ *
+ * These are the three distinct dead ends a user can actually reach during
+ * sign-in, and they need different advice. Folding them into the shared
+ * `toApiMessage` would collapse a denied approval into "something went wrong",
+ * which is the mistake the 401-mapping fix in `authService` already corrected
+ * once from the other direction.
+ */
+function toAuthMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : ''
+
+  if (message === SESSION_DENIED) {
+    return 'TMDB did not approve that sign-in. It may have expired, or already been used.'
+  }
+  if (message.includes('did not return a request token')) {
+    return 'TMDB is not returning an approval token right now. Please try again shortly.'
+  }
+  if (message.includes('did not return an account')) {
+    return 'That session could not be resolved to a TMDB account.'
+  }
+  if (message === TMDB_UNAUTHORIZED) {
+    return `TMDB rejected the API token. ${tokenAdvice()}`
   }
   return 'Sign-in could not be completed. Please try again.'
 }
@@ -80,7 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // A revoked or expired session must be forgotten, not retried forever.
         removeStoredSession()
-        setError(toMessage(e))
+        setError(toAuthMessage(e))
         setStatus('anonymous')
       }
     }
@@ -101,7 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // cannot be done with the client-side router.
       window.location.assign(buildApprovalUrl(requestToken))
     } catch (e) {
-      setError(toMessage(e))
+      setError(toAuthMessage(e))
       // Swallowed rather than rethrown, but the caller needs to know the
       // navigation never happened so it can re-enable its button. Without this
       // the user is stuck on a disabled "Redirecting to TMDB" button with no
@@ -130,7 +140,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setStatus('authenticated')
       return true
     } catch (e) {
-      setError(toMessage(e))
+      setError(toAuthMessage(e))
       setStatus('anonymous')
       return false
     }
