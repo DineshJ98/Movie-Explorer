@@ -40,8 +40,14 @@ export default async function handler(req, res) {
     })
   }
 
-  // Vercel exposes a catch-all as req.query.path, always an array of segments.
-  const segments = Array.isArray(req.query?.path) ? req.query.path : []
+  // Vercel normally exposes a catch-all as `req.query.path`, an array of segments.
+  // It is not guaranteed. Under a `functions` mount, and under some rewrite
+  // configurations, it comes back empty, which silently produced an empty
+  // `resource` that then failed every allowlist test -- including `/account`,
+  // which is allowed. Parse the path from the URL too and use whichever source
+  // actually has segments, so a routing-metadata quirk cannot break the proxy.
+  const fromQuery = Array.isArray(req.query?.path) ? req.query.path : []
+  const segments = fromQuery.length > 0 ? fromQuery : pathSegmentsFromUrl(req.url)
   const resource = segments.map((s) => decodeURIComponent(s)).join('/')
 
   const rule = ALLOWED.find((r) => r.method === req.method && r.pattern.test(resource))
@@ -107,4 +113,18 @@ function json(res, status, payload) {
   res.setHeader('content-type', 'application/json')
   res.setHeader('cache-control', 'no-store')
   return res.send(JSON.stringify(payload))
+}
+
+/**
+ * Path segments of the request URL, tolerating the `/api/tmdb` mount prefix being
+ * present or already stripped. Query string ignored. Empty segments (a leading,
+ * trailing, or doubled slash) are dropped rather than producing an empty segment
+ * that would never match an allowlist pattern.
+ */
+function pathSegmentsFromUrl(url = '') {
+  return String(url)
+    .split('?')[0]
+    .replace(/^\/api\/tmdb/, '')
+    .split('/')
+    .filter(Boolean)
 }

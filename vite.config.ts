@@ -91,9 +91,9 @@ export default defineConfig(({ command, mode }) => {
     throw new Error(
       'VITE_TMDB_TOKEN is set for a production build. The token is injected ' +
         'server-side by api/tmdb/[...path].js from TMDB_TOKEN, and anything ' +
-        'VITE_-prefixed is inlined into the public bundle. Remove ' +
-        'VITE_TMDB_TOKEN from the production environment (keep it in .env.local ' +
-        'for the dev proxy) and set TMDB_TOKEN instead.',
+        'VITE_-prefixed is inlined into the public bundle. Delete ' +
+        'VITE_TMDB_TOKEN everywhere and use TMDB_TOKEN instead -- that one ' +
+        'variable serves both the dev proxy and the deployed function.',
     )
   }
 
@@ -120,11 +120,20 @@ export default defineConfig(({ command, mode }) => {
       strictPort: true,
       https: devTls ?? undefined,
       proxy: {
-        '/tmdb': {
+        // The same path the Vercel function answers on, so the client can use one
+        // base URL in every environment instead of branching on DEV.
+        //
+        // The token is injected HERE, server-side, exactly as
+        // `api/tmdb/[...path].js` does in production. That is what allows `.env.local`
+        // to hold a single unprefixed `TMDB_TOKEN` instead of `VITE_TMDB_TOKEN`,
+        // which in turn removes the conflict where the variable dev needs is the
+        // same one `vite.config.ts` refuses to let a production build see.
+        '/api/tmdb': {
           target: env.VITE_TMDB_API_ORIGIN ?? 'https://api.themoviedb.org',
           changeOrigin: true,
           secure: true,
-          rewrite: (path) => path.replace(/^\/tmdb/, '/3'),
+          rewrite: (path) => path.replace(/^\/api\/tmdb/, '/3'),
+          headers: env.TMDB_TOKEN ? { Authorization: `Bearer ${env.TMDB_TOKEN}` } : undefined,
         },
       },
     },

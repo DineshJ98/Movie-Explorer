@@ -6,13 +6,14 @@ import { TMDB_NOT_FOUND, TMDB_UNAUTHORIZED, TMDB_UPSTREAM_UNREACHABLE } from '..
  * Kept in one place because the same message was duplicated across three files and
  * had already drifted: the copy told users to fix `VITE_TMDB_TOKEN` in
  * `.env.local`, which is wrong in production. There is no `.env.local` on a
- * deployed host, and the token is not a client value there at all.
+ * deployed host, and the token is not a client value there at all. The token now
+ * lives on the server in both environments, so only the location differs.
  */
 
 /** Which side the token lives on, so the advice matches the environment. */
 export function tokenAdvice(): string {
   return import.meta.env.DEV
-    ? 'Check VITE_TMDB_TOKEN in your .env.local file.'
+    ? 'Check TMDB_TOKEN in your .env.local file.'
     : 'The deployment is missing its TMDB_TOKEN server setting.'
 }
 
