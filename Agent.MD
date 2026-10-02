@@ -41,7 +41,8 @@ Vite only exposes env vars prefixed with `VITE_`. Any variable without that pref
 
 | Variable | Purpose |
 |---|---|
-| `VITE_TMDB_TOKEN` | TMDB **v4 "API Read Access Token"** (not the v3 API key), sent as an `Authorization: Bearer <token>` header. |
+| `VITE_TMDB_TOKEN` | Dev only. TMDB **v4 "API Read Access Token"** (not the v3 API key). Inlined into the bundle, so production must not set it. |
+| `TMDB_TOKEN` | Production only, server-side. Same token value, read by `api/tmdb/[...path].js`. Never reaches the bundle. |
 | `VITE_TMDB_IMAGE_BASE` | Base URL for TMDB image assets, no trailing slash. |
 | `VITE_TMDB_API_ORIGIN` | Origin the Vite dev proxy forwards to. |
 
@@ -64,7 +65,7 @@ Routes must resolve to real content when entered directly by URL. A cold page lo
 
 To deliver a solid MVP within a rapid timeframe, the assistant must follow these deliberate trade-offs:
 
-1. **Direct API Gateways:** Skip setting up full intermediate proxy networks or backend microservices for now. Fetch assets directly via local client configuration variables (`VITE_TMDB_TOKEN`) injected cleanly using Authorization Bearer headers. In development, `vite.config.ts` proxies `/tmdb/*` to `/3/*` on the TMDB origin so the token never appears as a URL parameter.
+1. **Thin edge proxy, no backend:** No backend microservices or databases. A single allowlisted serverless function (`api/tmdb/[...path].js`) injects `TMDB_TOKEN` server-side in production, so the read token is not in the shipped bundle. In development, `vite.config.ts` proxies `/tmdb/*` to `/3/*` on the TMDB origin using `VITE_TMDB_TOKEN`. The token is never a URL parameter in either mode.
 2. **TMDB Native Authentication:** Users authenticate against **TMDB's real user database** using the official request-token session pipeline. Do **not** build a local mock auth, do not hardcode credentials, and do not collect a TMDB username or password in this app. TMDB marks the password-based `validate_with_login` flow as *strongly discouraged* precisely because it pushes a real account password through the frontend; the redirect flow is the sanctioned alternative.
 3. **Account-Backed Favorites:** The watchlist is stored on the user's TMDB account via `/account/{account_id}/favorite`, not in `localStorage`. Favorites are therefore **account-scoped and sync across devices**. Any local storage is a read-through cache only and must never be treated as the source of truth, or a logout/login-as-another-user on the same browser would leak the previous account's favorites.
 4. **UX Strategy Shift:** Use clean "Load More" pagination patterns at the bottom of grids instead of complex infinite scroll tracking blocks to ensure maximum architectural stability.
@@ -210,19 +211,69 @@ build error.
 
 ## What is and is not a secret in this app
 
-**The TMDB read token is public, by necessity.** `VITE_`-prefixed variables are inlined
-into the client bundle, so `VITE_TMDB_TOKEN` is readable by anyone who views source.
-This is unavoidable for a client-side TMDB app — the browser has to make the request. A
-v4 Read Access Token can only read public catalogue data; it cannot modify an account or
-read a watchlist. Rotate at TMDB → Settings → API if it leaks.
+**The TMDB read token is public, by necessity in development.** `VITE_`-prefixed variables
+are inlined into the client bundle, so `VITE_TMDB_TOKEN` is readable by anyone who views
+source during `pnpm dev`. A v4 Read Access Token can only read public catalogue data; it
+cannot modify an account or read a watchlist. Rotate at TMDB → Settings → API if it leaks.
+
+**In production the token no longer ships at all.** `api/tmdb/[...path].js` injects
+`TMDB_TOKEN` server-side. See the proxy section below.
 
 **`session_id` is the real credential, not the token.** It is a write credential for a
 user's TMDB account, and it lives in `localStorage` (`STORAGE_KEYS.session`). Anything
-running on the origin can read it. This is the accepted trade-off of a no-backend app,
-not a bug — but it is why the CSP matters.
+running on the origin can read it. The proxy does **not** hide this: the browser still
+holds `session_id` and sends it through `/api/tmdb` to TMDB. Hiding it would require a
+backend that owns the account session, which is a different architecture — a phase, not a
+config change. This is the accepted trade-off of a no-backend app, and it is why the CSP
+matters.
 
 `.env.local` is git-ignored via `.gitignore` and was never committed (verified across all
 refs). Re-verify with `git log --all -p | grep -cF "$TOKEN"` after any change.
+
+## Serverless TMDB proxy (added 2026-09-30)
+
+`api/tmdb/[...path].js` is a strict allowlist proxy. In production `tmdbClient.ts` targets
+`/api/tmdb`; the function attaches `Authorization: Bearer $TMDB_TOKEN` and forwards to
+`https://api.themoviedb.org/3`. Dev is unchanged and still uses the Vite proxy at `/tmdb`.
+
+| Environment | Base URL | Token source |
+| ----------- | -------- | ------------ |
+| `pnpm dev` | `/tmdb` (Vite proxy) | `VITE_TMDB_TOKEN` (inlined, public) |
+| Production | `/api/tmdb` (Vercel Function) | `TMDB_TOKEN` (server-only) |
+
+**Deployment requirement:** in Vercel, set `TMDB_TOKEN` and **delete `VITE_TMDB_TOKEN`**.
+Not optional — `vite.config.ts` throws on any production build where `VITE_TMDB_TOKEN` is
+set, because the variable would be inlined into the public bundle.
+
+> The guard exists because the token was *already* being eliminated by dead-code
+> elimination: `tmdbClient.ts` reads it only inside an `import.meta.env.DEV` branch, and
+> esbuild drops the branch, so the token was absent from `dist/` even when the variable was
+> set. Verified, and still not trusted. Moving that read out of the DEV branch, or a
+> bundler upgrade, would silently start shipping the token again with no test failure. The
+> build guard converts a silent leak into a loud error.
+
+What the proxy enforces:
+
+- **Allowlist of seven routes only** — the four auth routes plus trending/search/detail.
+  Anything else 404s *before* a fetch. `account/<id>` is not allowed because the app
+  already resolves accounts by `session_id`; adding ID-addressable routes later would
+  widen it.
+- **Strips `api_key` and `api_token`** from the query so a client cannot smuggle a
+  credential past the bearer token.
+- **Ignores any client `Authorization` header.** The server token wins.
+- **`Cache-Control: no-store` on every response.** A per-session response is not
+  cacheable; Vercel's CDN must not replay `/account` or `/authentication/session`.
+- **No rate limiting, no caching** — deliberately minimal, per scope.
+
+**Extending it for Phase 6 (favorites):** add the favorites endpoints to the allowlist
+with the same care. Do not replace the allowlist with a pass-through — an open relay on
+your deployment quota is a billing and abuse risk.
+
+`vercel.json` rewrites SPA routes to `index.html` with source
+`/((?!api/|assets/).*)`. The negative lookahead is required: a bare `/(.*)` rewrite can
+match `/api/*` and serve `index.html` instead of invoking the function, which presents as a
+mysterious "login broken in production only" failure. This is the same class of bug as the
+original `/tmdb` production outage.
 
 ## Content-Security-Policy (added 2026-09-30)
 

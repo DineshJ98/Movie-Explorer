@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getMovieDetails } from '../api/movieService'
-import { TMDB_NOT_FOUND, TMDB_UNAUTHORIZED } from '../api/tmdbClient'
+import { toApiMessage } from '../utils/apiErrors'
 import type { TmdbMovieDetail } from '../types/tmdb'
 
 export type DetailStatus = 'loading' | 'success' | 'error'
@@ -17,18 +17,6 @@ interface DetailState {
   id: number | null
   movie: TmdbMovieDetail | null
   error: string | null
-}
-
-function toMessage(error: unknown, id: number): string {
-  const message = error instanceof Error ? error.message : ''
-
-  if (message === TMDB_NOT_FOUND) {
-    return `We could not find a movie with id ${id}. It may have been removed from TMDB.`
-  }
-  if (message === TMDB_UNAUTHORIZED) {
-    return 'TMDB rejected the API token. Check VITE_TMDB_TOKEN in your .env.local file.'
-  }
-  return 'Something went wrong loading this movie. Please try again.'
 }
 
 /**
@@ -74,7 +62,7 @@ export function useMovieDetails(id: number): UseMovieDetailsResult {
         if (requestId !== requestIdRef.current) return
         if (controller.signal.aborted) return
 
-        setState((prev) => ({ ...prev, id, error: toMessage(e, id) }))
+        setState((prev) => ({ ...prev, id, error: toApiMessage(e, `We could not find a movie with id ${id}. It may have been removed from TMDB.`) }))
         setStatus('error')
       }
     }

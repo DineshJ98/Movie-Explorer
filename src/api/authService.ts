@@ -11,8 +11,8 @@ import type {
  * Distinct from `TMDB_UNAUTHORIZED` on purpose. A 401 from this endpoint almost
  * always means the user declined, closed the tab, or the token was already
  * spent — not that the app's API token is wrong. Without this marker the shared
- * response interceptor rewrites the error and the user is told to check
- * `VITE_TMDB_TOKEN`, which has nothing to do with what they just did.
+ * response interceptor rewrites the error and the user is told to check the API
+ * token, which has nothing to do with what they just did.
  */
 export const SESSION_DENIED = 'TMDB_SESSION_DENIED' as const
 

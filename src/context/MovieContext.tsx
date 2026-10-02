@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from 'react'
 import { getTrending, searchMovies } from '../api/movieService'
-import { TMDB_NOT_FOUND, TMDB_UNAUTHORIZED } from '../api/tmdbClient'
+import { toApiMessage } from '../utils/apiErrors'
 import { useDebounce } from '../hooks/useDebounce'
 import type { TmdbMovie } from '../types/tmdb'
 import { useAuth } from './authContextValue'
@@ -27,17 +27,6 @@ interface RequestState {
   error: string | null
 }
 
-function toMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : ''
-
-  if (message === TMDB_UNAUTHORIZED) {
-    return 'TMDB rejected the API token. Check VITE_TMDB_TOKEN in your .env.local file.'
-  }
-  if (message === TMDB_NOT_FOUND) {
-    return 'Those results could not be found.'
-  }
-  return 'Something went wrong talking to TMDB. Please try again.'
-}
 
 export function MovieProvider({ children }: { children: ReactNode }) {
   const { status: authStatus } = useAuth()
@@ -101,7 +90,7 @@ export function MovieProvider({ children }: { children: ReactNode }) {
       if (requestId !== requestIdRef.current) return
       if (controller.signal.aborted) return
 
-      setResult((prev) => ({ ...prev, error: toMessage(e) }))
+      setResult((prev) => ({ ...prev, error: toApiMessage(e, 'Those results could not be found.') }))
       setStatus('error')
     }
   }, [])
